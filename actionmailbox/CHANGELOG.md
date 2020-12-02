@@ -1,6 +1,7 @@
 *   Add Amazon SES/SNS ingress.
 
     *Bob Farrell*
+    *Chris Ortman*
 
 
 
