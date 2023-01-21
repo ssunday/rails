@@ -24,13 +24,12 @@ module ActionMailbox
         end
 
         def message_content
-          return S3Download.new(bucket:, key:, region:).content if receipt? && content_in_s3?
+          return S3Download.new(bucket: bucket, key: key, region: region).content if receipt? && content_in_s3?
 
           raise MessageContentError, "Incoming emails must have notificationType `Received` and must be stored to S3"
         end
 
         private
-
           def notification
             @notification ||= JSON.parse(@request_body, symbolize_names: true)
           rescue JSON::ParserError => e
