@@ -33,7 +33,6 @@ module ActionMailbox
         ActionMailbox.incinerate = app.config.action_mailbox.incinerate.nil? ? true : app.config.action_mailbox.incinerate
         ActionMailbox.incinerate_after = app.config.action_mailbox.incinerate_after || 30.days
         ActionMailbox.queues = app.config.action_mailbox.queues || {}
-        ActionMailbox.amazon = app.config.action_mailbox.amazon || {}
         ActionMailbox.ingress = app.config.action_mailbox.ingress
         ActionMailbox.storage_service = app.config.action_mailbox.storage_service
       end

@@ -265,40 +265,57 @@ https://actionmailbox:PASSWORD@example.com/rails/action_mailbox/sendgrid/inbound
 
 NOTE: When configuring your SendGrid Inbound Parse webhook, be sure to check the box labeled **“Post the raw, full MIME message.”** Action Mailbox needs the raw MIME message to work.
 
-### Amazon
+### Amazon SES
 
-[Configure SES](https://docs.aws.amazon.com/ses/latest/DeveloperGuide/receiving-email-notifications.html) to route emails through _SNS_. Take note of the topic unique reference (`TopicArn`).
+  [Configure SES](https://docs.aws.amazon.com/ses/latest/DeveloperGuide/receiving-email-notifications.html) to (save emails to S3)(https://docs.aws.amazon.com/ses/latest/dg/receiving-email-action-s3.html).
 
-[Configure SNS](https://docs.aws.amazon.com/ses/latest/DeveloperGuide/receiving-email-action-sns.html) to send notifications to `/rails/action_mailbox/amazon/inbound_emails`.
-The option _Enable raw message delivery_ should **not** be selected. See [documentation](https://docs.aws.amazon.com/sns/latest/dg/sns-large-payload-raw-message-delivery.html) for more details.
+  Select the option to also trigger notification in SNS.
 
-If your application is found at https://example.com you would specify the fully-qualified URL https://example.com/rails/action_mailbox/amazon/inbound_emails
+  Take note of the topic unique reference (+TopicArn+) when using/creating the SNS topic.
 
-Install the [aws-sdk-sns](https://rubygems.org/gems/aws-sdk-sns) gem:
+  [Configure the SNS topic](https://docs.aws.amazon.com/ses/latest/DeveloperGuide/receiving-email-action-sns.html) to send notifications to +/rails/action_mailbox/amazon_ses/inbound_emails+.
+  The option "Enable raw message delivery" must not be selected. See [documentation](https://docs.aws.amazon.com/sns/latest/dg/sns-large-payload-raw-message-delivery.html) for more details.
 
-```ruby
-# Gemfile
-gem "aws-sdk-sns", "~> 1.9", require: false
-```
+  If your application is found at https://example.com you would specify the fully-qualified URL https://example.com/rails/action_mailbox/amazon_ses/inbound_emails.
 
-Tell Action Mailbox to accept notifications from _Amazon_:
+  Add the `aws-sdk-sns` and `aws-sdk-s3` gems to your Gemfile.
+
+  Configure Action Mailbox to accept notifications from Amazon:
 
 ```ruby
 # config/environments/production.rb
-config.action_mailbox.ingress = :amazon
+config.action_mailbox.ingress = :amazon_ses
+```
+
+Configure Action Mailbox to accept notifications from _Amazon SES_:
+
+```ruby
+# config/environments/production.rb
+config.action_mailbox.ingress = :amazon_ses
 ```
 
 Configure which _SNS_ topics will be accepted:
 
 ```ruby
-# config/environments/production.rb
-config.action_mailbox.amazon.subscribed_topics = %w(
-  arn:aws:sns:eu-west-1:123456789001:example-topic-1
-  arn:aws:sns:us-east-1:123456789002:example-topic-2
-)
+# config/mailbox.yml
+
+development:
+  amazon_ses:
+    subscribed_topics:
+    - arn:aws:sns:eu-west-1:123456789001:example-topic-1
+    - arn:aws:sns:us-east-1:123456789002:example-topic-2
+    # Optionally include S3 credentials, otherwise use default `aws-sdk-s3` credential discovery
+    # See https://docs.aws.amazon.com/sdk-for-ruby/v3/api/Aws/S3/Client.html for details.
+    s3:
+      access_key_id: ABC123DEF456
+      secret_access_key: ZYXCBA987543210
 ```
 
 Your application is now ready to accept confirmation requests and email notifications.
+
+To test, follow the [ActionMailbox setup guide](https://guides.rubyonrails.org/action_mailbox_basics.html), then send an email to your inbound email address configured in _SES_ and inspect `ActionMailbox::InboundEmail.last`.
+
+If the email was routed successfully it will be available for inspection.
 
 ## Examples
 

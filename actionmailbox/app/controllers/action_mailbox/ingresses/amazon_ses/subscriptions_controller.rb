@@ -2,8 +2,8 @@
 
 module ActionMailbox
   module Ingresses
-    module Amazon
-      class ConfirmationsController < BaseController
+    module AmazonSes
+      class SubscriptionsController < BaseController
         def create
           if @notification.subscription_confirmed?
             head :ok
@@ -11,6 +11,10 @@ module ActionMailbox
             Rails.logger.error "SNS subscription confirmation request rejected."
             head :unprocessable_entity
           end
+        end
+
+        def destroy
+          head :ok
         end
       end
     end

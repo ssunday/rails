@@ -7,14 +7,12 @@ Rails.application.routes.draw do
     post "/sendgrid/inbound_emails" => "sendgrid/inbound_emails#create", as: :rails_sendgrid_inbound_emails
 
     # Amazon requires that SNS topic subscriptions have been accepted before sending notifications.
-    post "/amazon/inbound_emails"   => "amazon/confirmations#create", as: :rails_amazon_confirmations,
-      constraints: lambda { |request|
-        ActionMailbox::Ingresses::Amazon::SnsMessageTypeConstraint.new("SubscriptionConfirmation").matches?(request)
-      }
-    post "/amazon/inbound_emails"   => "amazon/inbound_emails#create",    as: :rails_amazon_inbound_emails,
-      constraints: lambda { |request|
-        ActionMailbox::Ingresses::Amazon::SnsMessageTypeConstraint.new("Notification").matches?(request)
-      }
+    post "/amazon_ses/inbound_emails"   => "amazon_ses/subscriptions#create",     as: :rails_amazon_ses_subscriptions_subscribe, format: :json,
+      constraints: lambda { |request| JSON.parse(request.raw_post)["Type"] == "SubscriptionConfirmation" }
+    post "/amazon_ses/inbound_emails"   => "amazon_ses/subscriptions#destroy",    as: :rails_amazon_ses_subscriptions_unsubscribe, format: :json,
+      constraints: lambda { |request| JSON.parse(request.raw_post)["Type"] == "UnsubscribeConfirmation" }
+    post "/amazon_ses/inbound_emails"   => "amazon_ses/inbound_emails#create",    as: :rails_amazon_ses_inbound_emails, format: :json,
+      constraints: lambda { |request| JSON.parse(request.raw_post)["Type"] == "Notification" }
 
     # Mandrill checks for the existence of a URL with a HEAD request before it will create the webhook.
     get "/mandrill/inbound_emails"  => "mandrill/inbound_emails#health_check", as: :rails_mandrill_inbound_health_check

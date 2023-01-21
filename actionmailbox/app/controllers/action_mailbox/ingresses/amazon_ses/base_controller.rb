@@ -2,25 +2,28 @@
 
 module ActionMailbox
   module Ingresses
-    module Amazon
+    module AmazonSes
+      def self.config
+        @config ||= Rails.application.config_for(:mailbox).fetch(:amazon_ses)
+      end
+
       class BaseController < ActionMailbox::BaseController
         before_action :set_notification, :ensure_valid_topic, :ensure_verified
 
         def ingress_name
-          :amazon
+          :amazon_ses
         end
 
         private
           def set_notification
-            parsed_params = JSON.parse(request.raw_post).with_indifferent_access
-            @notification = SnsNotification.new parsed_params
+            @notification = SnsNotification.new(request.raw_post)
           end
 
           def ensure_valid_topic
-            unless @notification.topic.in? Array(ActionMailbox.amazon.subscribed_topics)
-              Rails.logger.warn "Ignoring unknown topic: #{@notification.topic}"
-              head :unauthorized
-            end
+            return if @notification.topic.in? Array(AmazonSes.config.fetch(:subscribed_topics))
+
+            Rails.logger.warn "Ignoring unknown topic: #{@notification.topic}"
+            head :unauthorized
           end
 
           def ensure_verified
