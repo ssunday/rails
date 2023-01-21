@@ -11,7 +11,10 @@ module ActionText
     # that Trix will write to on changes, so the content will be sent on form submissions.
     #
     # ==== Options
-    # * <tt>:class</tt> - Defaults to "trix-content" which ensures default styling is applied.
+    # * <tt>:class</tt> - Defaults to "trix-content" so that default styles will be applied.
+    #   Setting this to a different value will prevent default styles from being applied.
+    # * <tt>[:data][:direct_upload_url]</tt> - Defaults to +rails_direct_uploads_url+.
+    # * <tt>[:data][:blob_url_template]</tt> - Defaults to <tt>rails_service_blob_url(":signed_id", ":filename")</tt>.
     #
     # ==== Example
     #
@@ -20,16 +23,17 @@ module ActionText
     #   # <trix-editor id="content" input="trix_input_post_1" class="trix-content" ...></trix-editor>
     def rich_text_area_tag(name, value = nil, options = {})
       options = options.symbolize_keys
+      form = options.delete(:form)
 
       options[:input] ||= "trix_input_#{ActionText::TagHelper.id += 1}"
       options[:class] ||= "trix-content"
 
       options[:data] ||= {}
-      options[:data][:direct_upload_url] = main_app.rails_direct_uploads_url
-      options[:data][:blob_url_template] = main_app.rails_service_blob_url(":signed_id", ":filename")
+      options[:data][:direct_upload_url] ||= main_app.rails_direct_uploads_url
+      options[:data][:blob_url_template] ||= main_app.rails_service_blob_url(":signed_id", ":filename")
 
       editor_tag = content_tag("trix-editor", "", options)
-      input_tag = hidden_field_tag(name, value, id: options[:input])
+      input_tag = hidden_field_tag(name, value.try(:to_trix_html) || value, id: options[:input], form: form)
 
       input_tag + editor_tag
     end
@@ -46,11 +50,8 @@ module ActionView::Helpers
       options = @options.stringify_keys
       add_default_name_and_id(options)
       options["input"] ||= dom_id(object, [options["id"], :trix_input].compact.join("_")) if object
-      @template_object.rich_text_area_tag(options.delete("name"), options.fetch("value") { editable_value }, options.except("value"))
-    end
-
-    def editable_value
-      value&.body.try(:to_trix_html)
+      html_tag = @template_object.rich_text_area_tag(options.delete("name"), options.fetch("value") { value }, options.except("value"))
+      error_wrapping(html_tag)
     end
   end
 
@@ -61,6 +62,8 @@ module ActionView::Helpers
     # ==== Options
     # * <tt>:class</tt> - Defaults to "trix-content" which ensures default styling is applied.
     # * <tt>:value</tt> - Adds a default value to the HTML input tag.
+    # * <tt>[:data][:direct_upload_url]</tt> - Defaults to +rails_direct_uploads_url+.
+    # * <tt>[:data][:blob_url_template]</tt> - Defaults to <tt>rails_service_blob_url(":signed_id", ":filename")</tt>.
     #
     # ==== Example
     #   form_with(model: @message) do |form|

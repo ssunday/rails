@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/testing/strict_warnings"
+
 $:.unshift File.expand_path("lib", __dir__)
 
 ENV["TMPDIR"] = File.expand_path("tmp", __dir__)
@@ -34,12 +36,10 @@ end
 ActionViewTestSuiteUtils.require_helpers("#{__dir__}/fixtures/helpers")
 ActionViewTestSuiteUtils.require_helpers("#{__dir__}/fixtures/alternate_helpers")
 
-ActiveSupport::Dependencies.hook!
-
 Thread.abort_on_exception = true
 
 # Show backtraces for deprecated behavior for quicker cleanup.
-ActiveSupport::Deprecation.debug = true
+ActionView.deprecator.debug = true
 
 # Disable available locale checks to avoid warnings running the test suite.
 I18n.enforce_available_locales = false
@@ -59,6 +59,8 @@ module RenderERBUtils
   end
 
   def render_erb(string)
+    @virtual_path = nil
+
     template = ActionView::Template.new(
       string.strip,
       "test template",
@@ -177,16 +179,15 @@ module ActionDispatch
 end
 
 class ActiveSupport::TestCase
-  parallelize
+  if Process.respond_to?(:fork) && !Gem.win_platform?
+    parallelize
+  else
+    parallelize(with: :threads)
+  end
 
   include ActiveSupport::Testing::MethodCallAssertions
 
   private
-    # Skips the current run on Rubinius using Minitest::Assertions#skip
-    def rubinius_skip(message = "")
-      skip message if RUBY_ENGINE == "rbx"
-    end
-
     # Skips the current run on JRuby using Minitest::Assertions#skip
     def jruby_skip(message = "")
       skip message if defined?(JRUBY_VERSION)

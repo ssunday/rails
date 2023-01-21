@@ -157,7 +157,7 @@ class MultipartParamsParsingTest < ActionDispatch::IntegrationTest
   test "uploads and reads binary file" do
     with_test_routing do
       fixture = FIXTURE_PATH + "/ruby_on_rails.jpg"
-      params = { uploaded_data: fixture_file_upload(fixture, "image/jpg") }
+      params = { uploaded_data: fixture_file_upload(fixture, "image/jpeg") }
       post "/read", params: params
     end
   end
@@ -173,7 +173,7 @@ class MultipartParamsParsingTest < ActionDispatch::IntegrationTest
   test "does not raise EOFError on GET request with multipart content-type" do
     with_routing do |set|
       set.draw do
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get ":action", controller: "multipart_params_parsing_test/test"
         end
       end
@@ -204,7 +204,7 @@ class MultipartParamsParsingTest < ActionDispatch::IntegrationTest
     def with_test_routing
       with_routing do |set|
         set.draw do
-          ActiveSupport::Deprecation.silence do
+          ActionDispatch.deprecator.silence do
             post ":action", controller: "multipart_params_parsing_test/test"
           end
         end

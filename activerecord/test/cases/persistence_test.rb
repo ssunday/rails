@@ -2,6 +2,8 @@
 
 require "cases/helper"
 require "models/aircraft"
+require "models/dashboard"
+require "models/clothing_item"
 require "models/post"
 require "models/comment"
 require "models/author"
@@ -21,7 +23,8 @@ require "models/admin"
 require "models/admin/user"
 
 class PersistenceTest < ActiveRecord::TestCase
-  fixtures :topics, :companies, :developers, :accounts, :minimalistics, :authors, :author_addresses, :posts, :minivans
+  fixtures :topics, :companies, :developers, :accounts, :minimalistics, :authors, :author_addresses,
+    :posts, :minivans, :clothing_items
 
   def test_update_many
     topic_data = { 1 => { "content" => "1 updated" }, 2 => { "content" => "2 updated" } }
@@ -53,6 +56,29 @@ class PersistenceTest < ActiveRecord::TestCase
     assert_not_equal "2 updated", Topic.find(2).content
   end
 
+  def test_update_many_with_active_record_base_object
+    error = assert_raises(ArgumentError) do
+      Topic.update(Topic.first, "content" => "1 updated")
+    end
+
+    assert_equal "You are passing an instance of ActiveRecord::Base to `update`. " \
+    "Please pass the id of the object by calling `.id`.", error.message
+
+    assert_not_equal "1 updated", Topic.first.content
+  end
+
+  def test_update_many_with_array_of_active_record_base_objects
+    error = assert_raise(ArgumentError) do
+      Topic.update(Topic.first(2), content: "updated")
+    end
+
+    assert_equal "You are passing an array of ActiveRecord::Base instances to `update`. " \
+    "Please pass the ids of the objects by calling `pluck(:id)` or `map(&:id)`.", error.message
+
+    assert_not_equal "updated", Topic.first.content
+    assert_not_equal "updated", Topic.second.content
+  end
+
   def test_class_level_update_without_ids
     topics = Topic.all
     assert_equal 5, topics.length
@@ -76,6 +102,94 @@ class PersistenceTest < ActiveRecord::TestCase
 
     assert_not_equal "1 updated", Topic.find(1).content
     assert_not_equal "2 updated", Topic.find(2).content
+  end
+
+  def test_returns_object_even_if_validations_failed
+    assert_equal Developer.all.to_a, Developer.update(salary: 1_000_000)
+  end
+
+  def test_update_many!
+    topic_data = { 1 => { "content" => "1 updated" }, 2 => { "content" => "2 updated" } }
+    updated = Topic.update!(topic_data.keys, topic_data.values)
+
+    assert_equal [1, 2], updated.map(&:id)
+    assert_equal "1 updated", Topic.find(1).content
+    assert_equal "2 updated", Topic.find(2).content
+  end
+
+  def test_update_many_with_duplicated_ids!
+    updated = Topic.update!([1, 1, 2], [
+      { "content" => "1 duplicated" }, { "content" => "1 updated" }, { "content" => "2 updated" }
+    ])
+
+    assert_equal [1, 1, 2], updated.map(&:id)
+    assert_equal "1 updated", Topic.find(1).content
+    assert_equal "2 updated", Topic.find(2).content
+  end
+
+  def test_update_many_with_invalid_id!
+    topic_data = { 1 => { "content" => "1 updated" }, 2 => { "content" => "2 updated" }, 99999 => {} }
+
+    assert_raise(ActiveRecord::RecordNotFound) do
+      Topic.update!(topic_data.keys, topic_data.values)
+    end
+
+    assert_not_equal "1 updated", Topic.find(1).content
+    assert_not_equal "2 updated", Topic.find(2).content
+  end
+
+  def test_update_many_with_active_record_base_object!
+    error = assert_raises(ArgumentError) do
+      Topic.update!(Topic.first, "content" => "1 updated")
+    end
+
+    assert_equal "You are passing an instance of ActiveRecord::Base to `update!`. " \
+    "Please pass the id of the object by calling `.id`.", error.message
+
+    assert_not_equal "1 updated", Topic.first.content
+  end
+
+  def test_update_many_with_array_of_active_record_base_objects!
+    error = assert_raise(ArgumentError) do
+      Topic.update!(Topic.first(2), content: "updated")
+    end
+
+    assert_equal "You are passing an array of ActiveRecord::Base instances to `update!`. " \
+    "Please pass the ids of the objects by calling `pluck(:id)` or `map(&:id)`.", error.message
+
+    assert_not_equal "updated", Topic.first.content
+    assert_not_equal "updated", Topic.second.content
+  end
+
+  def test_class_level_update_without_ids!
+    topics = Topic.all
+    assert_equal 5, topics.length
+    topics.each do |topic|
+      assert_not_equal "updated", topic.content
+    end
+
+    updated = Topic.update!(content: "updated")
+    assert_equal 5, updated.length
+    updated.each do |topic|
+      assert_equal "updated", topic.content
+    end
+  end
+
+  def test_class_level_update_is_affected_by_scoping!
+    topic_data = { 1 => { "content" => "1 updated" }, 2 => { "content" => "2 updated" } }
+
+    assert_raise(ActiveRecord::RecordNotFound) do
+      Topic.where("1=0").scoping { Topic.update!(topic_data.keys, topic_data.values) }
+    end
+
+    assert_not_equal "1 updated", Topic.find(1).content
+    assert_not_equal "2 updated", Topic.find(2).content
+  end
+
+  def test_raises_error_when_validations_failed
+    assert_raises(ActiveRecord::RecordInvalid) do
+      Developer.update!(salary: 1_000_000)
+    end
   end
 
   def test_delete_all
@@ -194,7 +308,7 @@ class PersistenceTest < ActiveRecord::TestCase
     assert_not_predicate company, :valid?
     original_errors = company.errors
     client = company.becomes(Client)
-    assert_equal assert_deprecated { original_errors.keys }, assert_deprecated { client.errors.keys }
+    assert_equal original_errors.attribute_names, client.errors.attribute_names
   end
 
   def test_becomes_errors_base
@@ -208,7 +322,7 @@ class PersistenceTest < ActiveRecord::TestCase
     admin.errors.add :token, :invalid
     child = admin.becomes(child_class)
 
-    assert_equal [:token], assert_deprecated { child.errors.keys }
+    assert_equal [:token], child.errors.attribute_names
     assert_nothing_raised do
       child.errors.add :foo, :invalid
     end
@@ -237,6 +351,23 @@ class PersistenceTest < ActiveRecord::TestCase
     client = company.becomes(Client)
     assert_equal "37signals", client.name
     assert_equal %w{name}, client.changed
+  end
+
+  def test_becomes_initializes_missing_attributes
+    company = Company.new(name: "GrowingCompany")
+
+    client = company.becomes(LargeClient)
+
+    assert_equal 50, client.extra_size
+  end
+
+  def test_becomes_keeps_extra_attributes
+    client = LargeClient.new(name: "ShrinkingCompany")
+
+    company = client.becomes(Company)
+
+    assert_equal 50, company.extra_size
+    assert_equal 50, client.extra_size
   end
 
   def test_delete_many
@@ -296,12 +427,59 @@ class PersistenceTest < ActiveRecord::TestCase
     assert_equal("New Topic", topic_reloaded.title)
   end
 
-  def test_save!
+  def test_build
+    topic = Topic.build(title: "New Topic")
+    assert_equal "New Topic", topic.title
+    assert_not_predicate topic, :persisted?
+  end
+
+  def test_build_many
+    topics = Topic.build([{ title: "first" }, { title: "second" }])
+    assert_equal ["first", "second"], topics.map(&:title)
+    topics.each { |topic| assert_not_predicate topic, :persisted? }
+  end
+
+  def test_build_through_factory_with_block
+    topic = Topic.build("title" => "New Topic") do |t|
+      t.author_name = "David"
+    end
+    assert_equal("New Topic", topic.title)
+    assert_equal("David", topic.author_name)
+    assert_not_predicate topic, :persisted?
+  end
+
+  def test_build_many_through_factory_with_block
+    topics = Topic.build([{ "title" => "first" }, { "title" => "second" }]) do |t|
+      t.author_name = "David"
+    end
+    assert_equal 2, topics.size
+    topics.each { |topic| assert_not_predicate topic, :persisted? }
+    topic1, topic2 = topics
+    assert_equal "first", topic1.title
+    assert_equal "David", topic1.author_name
+    assert_equal "second", topic2.title
+    assert_equal "David", topic2.author_name
+  end
+
+  def test_save_valid_record
     topic = Topic.new(title: "New Topic")
     assert topic.save!
+  end
 
-    reply = WrongReply.new
-    assert_raise(ActiveRecord::RecordInvalid) { reply.save! }
+  def test_save_invalid_record
+    reply = WrongReply.new(title: "New reply")
+    error = assert_raise(ActiveRecord::RecordInvalid) { reply.save! }
+
+    assert_equal "Validation failed: Content Empty", error.message
+  end
+
+  def test_save_destroyed_object
+    topic = Topic.create!(title: "New Topic")
+    topic.destroy!
+
+    error = assert_raise(ActiveRecord::RecordNotSaved) { topic.save! }
+
+    assert_equal "Failed to save the record", error.message
   end
 
   def test_save_null_string_attributes
@@ -468,6 +646,51 @@ class PersistenceTest < ActiveRecord::TestCase
     topic_reloaded = Topic.find(topic.id)
     assert_equal("Another New Topic", topic_reloaded.title)
     assert_equal("David", topic_reloaded.author_name)
+  end
+
+  def test_update_attribute_after_update
+    klass = Class.new(Topic) do
+      def self.name; "Topic"; end
+      after_update :update_author, if: :saved_change_to_title?
+      def update_author
+        update_attribute("author_name", "David")
+      end
+    end
+    topic = klass.create(title: "New Topic")
+    topic.update(title: "Another Topic")
+
+    topic_reloaded = Topic.find(topic.id)
+    assert_equal("Another Topic", topic_reloaded.title)
+    assert_equal("David", topic_reloaded.author_name)
+  end
+
+  def test_update_attribute_in_before_validation_respects_callback_chain
+    klass = Class.new(Topic) do
+      def self.name; "Topic"; end
+
+      before_validation :set_author_name
+      after_create :track_create
+      after_update :call_once, if: :saved_change_to_author_name?
+
+      attr_reader :counter
+
+      def set_author_name
+        update_attribute :author_name, "David"
+      end
+
+      def track_create
+        call_once if saved_change_to_author_name?
+      end
+
+      def call_once
+        @counter ||= 0
+        @counter += 1
+      end
+    end
+
+    comment = klass.create(title: "New Topic", author_name: "Not David")
+
+    assert_equal 1, comment.counter
   end
 
   def test_update_attribute_does_not_run_sql_if_attribute_is_not_changed
@@ -642,6 +865,69 @@ class PersistenceTest < ActiveRecord::TestCase
 
     developer.reload
     assert_not_equal prev_month, developer.updated_at
+  end
+
+  def test_update_attribute!
+    assert_not_predicate Topic.find(1), :approved?
+    Topic.find(1).update_attribute!("approved", true)
+    assert_predicate Topic.find(1), :approved?
+
+    Topic.find(1).update_attribute!(:approved, false)
+    assert_not_predicate Topic.find(1), :approved?
+
+    Topic.find(1).update_attribute!(:change_approved_before_save, true)
+    assert_predicate Topic.find(1), :approved?
+  end
+
+  def test_update_attribute_for_readonly_attribute!
+    minivan = Minivan.find("m1")
+    assert_raises(ActiveRecord::ActiveRecordError) { minivan.update_attribute!(:color, "black") }
+  end
+
+  def test_update_attribute_with_one_updated!
+    t = Topic.first
+    t.update_attribute!(:title, "super_title")
+    assert_equal "super_title", t.title
+    assert_not t.changed?, "topic should not have changed"
+    assert_not t.title_changed?, "title should not have changed"
+    assert_nil t.title_change, "title change should be nil"
+
+    t.reload
+    assert_equal "super_title", t.title
+  end
+
+  def test_update_attribute_for_updated_at_on!
+    developer = Developer.find(1)
+    prev_month = Time.now.prev_month.change(usec: 0)
+
+    developer.update_attribute!(:updated_at, prev_month)
+    assert_equal prev_month, developer.updated_at
+
+    developer.update_attribute!(:salary, 80001)
+    assert_not_equal prev_month, developer.updated_at
+
+    developer.reload
+    assert_not_equal prev_month, developer.updated_at
+  end
+
+  def test_update_attribute_for_aborted_callback!
+    klass = Class.new(Topic) do
+      def self.name; "Topic"; end
+
+      before_update :throw_abort
+
+      def throw_abort
+        throw(:abort)
+      end
+    end
+
+    t = klass.create(title: "New Topic", author_name: "Not David")
+
+    assert_raises(ActiveRecord::RecordNotSaved) { t.update_attribute!(:title, "super_title") }
+
+    t_reloaded = Topic.find(t.id)
+
+    assert_equal "New Topic", t_reloaded.title
   end
 
   def test_update_column
@@ -1089,5 +1375,123 @@ class PersistenceTest < ActiveRecord::TestCase
   ensure
     ActiveRecord::Base.connection.remove_column(:topics, :foo)
     Topic.reset_column_information
+  end
+
+  def test_update_uses_query_constraints_config
+    clothing_item = clothing_items(:green_t_shirt)
+    sql = capture_sql { clothing_item.update(description: "Lovely green t-shirt")  }.first
+    assert_match(/WHERE .*clothing_type/, sql)
+    assert_match(/WHERE .*color/, sql)
+  end
+
+  def test_save_uses_query_constraints_config
+    clothing_item = clothing_items(:green_t_shirt)
+    clothing_item.description = "Lovely green t-shirt"
+    sql = capture_sql { clothing_item.save }.first
+    assert_match(/WHERE .*clothing_type/, sql)
+    assert_match(/WHERE .*color/, sql)
+  end
+
+  def test_reload_uses_query_constraints_config
+    clothing_item = clothing_items(:green_t_shirt)
+    sql = capture_sql { clothing_item.reload  }.first
+    assert_match(/WHERE .*clothing_type/, sql)
+    assert_match(/WHERE .*color/, sql)
+  end
+
+  def test_destroy_uses_query_constraints_config
+    clothing_item = clothing_items(:green_t_shirt)
+    sql = capture_sql { clothing_item.destroy }.first
+    assert_match(/WHERE .*clothing_type/, sql)
+    assert_match(/WHERE .*color/, sql)
+  end
+
+  def test_delete_uses_query_constraints_config
+    clothing_item = clothing_items(:green_t_shirt)
+    sql = capture_sql { clothing_item.delete }.first
+    assert_match(/WHERE .*clothing_type/, sql)
+    assert_match(/WHERE .*color/, sql)
+  end
+
+  def test_update_attribute_uses_query_constraints_config
+    clothing_item = clothing_items(:green_t_shirt)
+    sql = capture_sql { clothing_item.update_attribute(:description, "Lovely green t-shirt") }.first
+    assert_match(/WHERE .*clothing_type/, sql)
+    assert_match(/WHERE .*color/, sql)
+  end
+
+  def test_it_is_possible_to_update_parts_of_the_query_constraints_config
+    clothing_item = clothing_items(:green_t_shirt)
+    clothing_item.color = "blue"
+    clothing_item.description = "Now it's a blue t-shirt"
+    sql = capture_sql { clothing_item.save }.first
+    assert_match(/WHERE .*clothing_type/, sql)
+    assert_match(/WHERE .*color/, sql)
+
+    assert_equal("blue", ClothingItem.find_by(id: clothing_item.id).color)
+  end
+end
+
+class QueryConstraintsTest < ActiveRecord::TestCase
+  fixtures :clothing_items, :dashboards, :topics, :posts
+
+  def test_primary_key_stays_the_same
+    assert_equal("id", ClothingItem.primary_key)
+  end
+
+  def test_query_constraints_list_is_an_empty_array_if_primary_key_is_nil
+    klass = Class.new(ActiveRecord::Base) do
+      self.table_name = "developers_projects"
+    end
+
+    assert_nil klass.primary_key
+    assert_empty klass.query_constraints_list
+  end
+
+  def test_query_constraints_uses_primary_key_by_default
+    post = posts(:welcome)
+    assert_uses_query_constraints_on_reload(post, "id")
+  end
+
+  def test_query_constraints_uses_manually_configured_primary_key
+    dashboard = dashboards(:cool_first)
+    assert_uses_query_constraints_on_reload(dashboard, "dashboard_id")
+  end
+
+  def test_child_overriden_primary_key_is_used_as_query_constraint
+    topic = topics(:first)
+    assert_uses_query_constraints_on_reload(topic, "id")
+
+    title_pk_topic = topic.becomes(TitlePrimaryKeyTopic)
+    title_pk_topic.author_name = "Nikita"
+
+    sql = capture_sql { title_pk_topic.save }.first
+    assert_match(/WHERE .*title/, sql)
+  end
+
+  def test_child_keeps_parents_query_constraints
+    clothing_item = clothing_items(:green_t_shirt)
+    assert_uses_query_constraints_on_reload(clothing_item, ["clothing_type", "color"])
+
+    used_clothing_item = clothing_items(:used_blue_jeans)
+    assert_uses_query_constraints_on_reload(used_clothing_item, ["clothing_type", "color"])
+  end
+
+  def assert_uses_query_constraints_on_reload(object, columns)
+    flunk("columns argument must not be empty") if columns.blank?
+
+    sql = capture_sql { object.reload }.first
+    Array(columns).each do |column|
+      assert_match(/WHERE .*#{column}/, sql)
+    end
+  end
+
+  def test_query_constraints_raises_an_error_when_no_columns_provided
+    assert_raises(ArgumentError) do
+      Class.new(ActiveRecord::Base) do
+        self.table_name = "topics"
+        query_constraints
+      end
+    end
   end
 end

@@ -2,8 +2,6 @@
 
 require "active_support/core_ext/array/extract_options"
 require "action_dispatch/middleware/stack"
-require "action_dispatch/http/request"
-require "action_dispatch/http/response"
 
 module ActionController
   # Extend ActionDispatch middleware stack to make it aware of options
@@ -13,8 +11,8 @@ module ActionController
   #     use AuthenticationMiddleware, except: [:index, :show]
   #   end
   #
-  class MiddlewareStack < ActionDispatch::MiddlewareStack #:nodoc:
-    class Middleware < ActionDispatch::MiddlewareStack::Middleware #:nodoc:
+  class MiddlewareStack < ActionDispatch::MiddlewareStack # :nodoc:
+    class Middleware < ActionDispatch::MiddlewareStack::Middleware # :nodoc:
       def initialize(klass, args, actions, strategy, block)
         @actions = actions
         @strategy = strategy
@@ -62,7 +60,7 @@ module ActionController
 
   # <tt>ActionController::Metal</tt> is the simplest possible controller, providing a
   # valid Rack interface without the additional niceties provided by
-  # <tt>ActionController::Base</tt>.
+  # ActionController::Base.
   #
   # A sample metal controller might look like this:
   #
@@ -113,7 +111,7 @@ module ActionController
   #
   # == Other Helpers
   #
-  # You can refer to the modules included in <tt>ActionController::Base</tt> to see
+  # You can refer to the modules included in ActionController::Base to see
   # other features you can bring into your metal controller.
   #
   class Metal < AbstractController::Base
@@ -139,20 +137,49 @@ module ActionController
       false
     end
 
-    # Delegates to the class' <tt>controller_name</tt>.
+    class << self
+      private
+        def inherited(subclass)
+          super
+          subclass.middleware_stack = middleware_stack.dup
+          subclass.class_eval do
+            @controller_name = nil
+          end
+        end
+    end
+
+    # Delegates to the class's ::controller_name.
     def controller_name
       self.class.controller_name
     end
 
-    attr_internal :response, :request
+    ##
+    # :attr_reader: request
+    #
+    # The ActionDispatch::Request instance for the current request.
+    attr_internal :request
+
+    ##
+    # :attr_reader: response
+    #
+    # The ActionDispatch::Response instance for the current response.
+    attr_internal_reader :response
+
     delegate :session, to: "@_request"
-    delegate :headers, :status=, :location=, :content_type=,
+
+    ##
+    # Delegates to ActionDispatch::Response#headers.
+    delegate :headers, to: "@_response"
+
+    delegate :status=, :location=, :content_type=,
              :status, :location, :content_type, :media_type, to: "@_response"
 
     def initialize
       @_request = nil
       @_response = nil
+      @_response_body = nil
       @_routes = nil
+      @_params = nil
       super
     end
 
@@ -172,11 +199,13 @@ module ActionController
     end
 
     def response_body=(body)
-      body = [body] unless body.nil? || body.respond_to?(:each)
-      response.reset_body!
-      return unless body
-      response.body = body
-      super
+      if body
+        body = [body] if body.is_a?(String)
+        response.body = body
+        super
+      else
+        response.reset_body!
+      end
     end
 
     # Tests if render or redirect has already happened.
@@ -184,7 +213,7 @@ module ActionController
       response_body || response.committed?
     end
 
-    def dispatch(name, request, response) #:nodoc:
+    def dispatch(name, request, response) # :nodoc:
       set_request!(request)
       set_response!(response)
       process(name)
@@ -193,15 +222,28 @@ module ActionController
     end
 
     def set_response!(response) # :nodoc:
+      if @_response
+        _, _, body = @_response
+        body.close if body.respond_to?(:close)
+      end
+
       @_response = response
     end
 
-    def set_request!(request) #:nodoc:
+    # Assign the response and mark it as committed. No further processing will occur.
+    def response=(response)
+      set_response!(response)
+
+      # Force `performed?` to return true:
+      @_response_body = true
+    end
+
+    def set_request!(request) # :nodoc:
       @_request = request
       @_request.controller_instance = self
     end
 
-    def to_a #:nodoc:
+    def to_a # :nodoc:
       response.to_a
     end
 
@@ -211,18 +253,12 @@ module ActionController
 
     class_attribute :middleware_stack, default: ActionController::MiddlewareStack.new
 
-    def self.inherited(base) # :nodoc:
-      base.middleware_stack = middleware_stack.dup
-      super
-    end
-
     class << self
       # Pushes the given Rack middleware and its arguments to the bottom of the
       # middleware stack.
-      def use(*args, &block)
-        middleware_stack.use(*args, &block)
+      def use(...)
+        middleware_stack.use(...)
       end
-      ruby2_keywords(:use) if respond_to?(:ruby2_keywords, true)
     end
 
     # Alias for +middleware_stack+.

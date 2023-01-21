@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "active_support/inflector"
 require "active_support/core_ext/hash/indifferent_access"
 
 module ActiveRecord
@@ -43,6 +44,8 @@ module ActiveRecord
       # Determines whether to store the full constant name including namespace when using STI.
       # This is true, by default.
       class_attribute :store_full_sti_class, instance_writer: false, default: true
+
+      set_base_class
     end
 
     module ClassMethods
@@ -85,7 +88,7 @@ module ActiveRecord
         end
       end
 
-      def finder_needs_type_condition? #:nodoc:
+      def finder_needs_type_condition? # :nodoc:
         # This is like this because benchmarking justifies the strange :false stuff
         :true == (@finder_needs_type_condition ||= descends_from_active_record? ? :false : :true)
       end
@@ -98,17 +101,7 @@ module ActiveRecord
       #
       # If B < A and C < B and if A is an abstract_class then both B.base_class
       # and C.base_class would return B as the answer since A is an abstract_class.
-      def base_class
-        unless self < Base
-          raise ActiveRecordError, "#{name} doesn't belong in a hierarchy descending from ActiveRecord"
-        end
-
-        if superclass == Base || superclass.abstract_class?
-          self
-        else
-          superclass.base_class
-        end
-      end
+      attr_reader :base_class
 
       # Returns whether the class is a base class.
       # See #base_class for more information.
@@ -123,7 +116,7 @@ module ActiveRecord
       # true.
       # +ApplicationRecord+, for example, is generated as an abstract class.
       #
-      # Consider the following default behaviour:
+      # Consider the following default behavior:
       #
       #   Shape = Class.new(ActiveRecord::Base)
       #   Polygon = Class.new(Shape)
@@ -164,6 +157,21 @@ module ActiveRecord
         defined?(@abstract_class) && @abstract_class == true
       end
 
+      # Sets the application record class for Active Record
+      #
+      # This is useful if your application uses a different class than
+      # ApplicationRecord for your primary abstract class. This class
+      # will share a database connection with Active Record. It is the class
+      # that connects to your primary database.
+      def primary_abstract_class
+        if ActiveRecord.application_record_class && ActiveRecord.application_record_class.name != name
+          raise ArgumentError, "The `primary_abstract_class` is already set to #{ActiveRecord.application_record_class.inspect}. There can only be one `primary_abstract_class` in an application."
+        end
+
+        self.abstract_class = true
+        ActiveRecord.application_record_class = self
+      end
+
       # Returns the value to be stored in the inheritance column for STI.
       def sti_name
         store_full_sti_class && store_full_class_name ? name : name.demodulize
@@ -174,7 +182,7 @@ module ActiveRecord
       # It is used to find the class correspondent to the value stored in the inheritance column.
       def sti_class_for(type_name)
         if store_full_sti_class && store_full_class_name
-          ActiveSupport::Dependencies.constantize(type_name)
+          type_name.constantize
         else
           compute_type(type_name)
         end
@@ -196,15 +204,23 @@ module ActiveRecord
       # It is used to find the class correspondent to the value stored in the polymorphic type column.
       def polymorphic_class_for(name)
         if store_full_class_name
-          ActiveSupport::Dependencies.constantize(name)
+          name.constantize
         else
           compute_type(name)
         end
       end
 
-      def inherited(subclass)
-        subclass.instance_variable_set(:@_type_candidates_cache, Concurrent::Map.new)
+      def dup # :nodoc:
+        # `initialize_dup` / `initialize_copy` don't work when defined
+        # in the `singleton_class`.
+        other = super
+        other.set_base_class
+        other
+      end
+
+      def initialize_clone(other) # :nodoc:
         super
+        set_base_class
       end
 
       protected
@@ -214,10 +230,10 @@ module ActiveRecord
           if type_name.start_with?("::")
             # If the type is prefixed with a scope operator then we assume that
             # the type_name is an absolute reference.
-            ActiveSupport::Dependencies.constantize(type_name)
+            type_name.constantize
           else
             type_candidate = @_type_candidates_cache[type_name]
-            if type_candidate && type_constant = ActiveSupport::Dependencies.safe_constantize(type_candidate)
+            if type_candidate && type_constant = type_candidate.safe_constantize
               return type_constant
             end
 
@@ -227,7 +243,7 @@ module ActiveRecord
             candidates << type_name
 
             candidates.each do |candidate|
-              constant = ActiveSupport::Dependencies.safe_constantize(candidate)
+              constant = candidate.safe_constantize
               if candidate == constant.to_s
                 @_type_candidates_cache[type_name] = candidate
                 return constant
@@ -238,7 +254,32 @@ module ActiveRecord
           end
         end
 
+        def set_base_class # :nodoc:
+          @base_class = if self == Base
+            self
+          else
+            unless self < Base
+              raise ActiveRecordError, "#{name} doesn't belong in a hierarchy descending from ActiveRecord"
+            end
+
+            if superclass == Base || superclass.abstract_class?
+              self
+            else
+              superclass.base_class
+            end
+          end
+        end
+
       private
+        def inherited(subclass)
+          super
+          subclass.set_base_class
+          subclass.instance_variable_set(:@_type_candidates_cache, Concurrent::Map.new)
+          subclass.class_eval do
+            @finder_needs_type_condition = nil
+          end
+        end
+
         # Called by +instantiate+ to decide which class to use for a new
         # record instance. For single-table inheritance, we check the record
         # for a +type+ column and return the corresponding class.

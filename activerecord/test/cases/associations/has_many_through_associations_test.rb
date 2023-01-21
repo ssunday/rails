@@ -66,6 +66,14 @@ class HasManyThroughAssociationsTest < ActiveRecord::TestCase
     assert_equal [comments(:eager_other_comment1)], authors(:mary).comments.merge(Post.left_joins(:comments))
   end
 
+  def test_through_association_with_through_scope_and_nested_where
+    company = Company.create!(name: "special")
+    developer = SpecialDeveloper.create!
+    SpecialContract.create!(company: company, special_developer: developer)
+
+    assert_equal [developer], company.special_developers.where.not("contracts.id": nil)
+  end
+
   def test_preload_with_nested_association
     posts = Post.where(id: [authors(:david).id, authors(:mary).id]).
       preload(:author, :author_favorites_with_scope).order(:id).to_a
@@ -751,17 +759,17 @@ class HasManyThroughAssociationsTest < ActiveRecord::TestCase
 
   def test_push_with_invalid_join_record
     repair_validations(Contract) do
-      Contract.validate { |r| r.errors[:base] << "Invalid Contract" }
+      Contract.validate { |r| r.errors.add(:base, "Invalid Contract") }
 
       firm = companies(:first_firm)
       lifo = Developer.new(name: "lifo")
       assert_raises(ActiveRecord::RecordInvalid) do
-        assert_deprecated { firm.developers << lifo }
+        assert_deprecated(ActiveRecord.deprecator) { firm.developers << lifo }
       end
 
       lifo = Developer.create!(name: "lifo")
       assert_raises(ActiveRecord::RecordInvalid) do
-        assert_deprecated { firm.developers << lifo }
+        assert_deprecated(ActiveRecord.deprecator) { firm.developers << lifo }
       end
     end
   end
@@ -881,6 +889,16 @@ class HasManyThroughAssociationsTest < ActiveRecord::TestCase
       Post.first.tags.transaction do
         # nothing
       end
+    end
+  end
+
+  def test_has_many_through_uses_the_through_model_to_create_transactions
+    post   = posts(:thinking)
+    person = people(:david)
+    other_person = people(:michael)
+
+    assert_called(Reader, :transaction) do
+      post.people = [person, other_person]
     end
   end
 
@@ -1062,14 +1080,21 @@ class HasManyThroughAssociationsTest < ActiveRecord::TestCase
     assert_equal expected, Author.eager_load(:lazy_readers_skimmers_or_not).first.lazy_readers_skimmers_or_not
   end
 
-  def test_has_many_through_with_join_scope
+  def test_has_many_through_with_through_scope_with_includes
     expected = [readers(:bob_welcome).becomes(LazyReader)]
     assert_equal expected, Author.last.lazy_readers_skimmers_or_not_2
     assert_equal expected, Author.preload(:lazy_readers_skimmers_or_not_2).last.lazy_readers_skimmers_or_not_2
     assert_equal expected, Author.eager_load(:lazy_readers_skimmers_or_not_2).last.lazy_readers_skimmers_or_not_2
   end
 
-  def test_duplicated_has_many_through_with_join_scope
+  def test_has_many_through_with_through_scope_with_joins
+    expected = [readers(:bob_welcome).becomes(LazyReader)]
+    assert_equal expected, Author.last.lazy_readers_skimmers_or_not_3
+    assert_equal expected, Author.preload(:lazy_readers_skimmers_or_not_3).last.lazy_readers_skimmers_or_not_3
+    assert_equal expected, Author.eager_load(:lazy_readers_skimmers_or_not_3).last.lazy_readers_skimmers_or_not_3
+  end
+
+  def test_duplicated_has_many_through_with_through_scope_with_joins
     Categorization.create!(author: authors(:david), post: posts(:thinking), category: categories(:technology))
 
     expected = [categorizations(:david_welcome_general)]
@@ -1174,7 +1199,7 @@ class HasManyThroughAssociationsTest < ActiveRecord::TestCase
     member = members(:groucho)
     club   = member.clubs.create!
 
-    assert_equal true, club.reload.membership.favourite
+    assert_equal true, club.reload.membership.favorite
   end
 
   def test_deleting_from_has_many_through_a_belongs_to_should_not_try_to_update_counter
@@ -1198,8 +1223,8 @@ class HasManyThroughAssociationsTest < ActiveRecord::TestCase
 
   def test_create_should_not_raise_exception_when_join_record_has_errors
     repair_validations(Categorization) do
-      Categorization.validate { |r| r.errors[:base] << "Invalid Categorization" }
-      assert_deprecated { Category.create(name: "Fishing", authors: [Author.first]) }
+      Categorization.validate { |r| r.errors.add(:base, "Invalid Categorization") }
+      Category.create(name: "Fishing", authors: [Author.first])
     end
   end
 
@@ -1210,28 +1235,28 @@ class HasManyThroughAssociationsTest < ActiveRecord::TestCase
 
   def test_create_bang_should_raise_exception_when_join_record_has_errors
     repair_validations(Categorization) do
-      Categorization.validate { |r| r.errors[:base] << "Invalid Categorization" }
+      Categorization.validate { |r| r.errors.add(:base, "Invalid Categorization") }
       assert_raises(ActiveRecord::RecordInvalid) do
-        assert_deprecated { Category.create!(name: "Fishing", authors: [Author.first]) }
+        Category.create!(name: "Fishing", authors: [Author.first])
       end
     end
   end
 
   def test_save_bang_should_raise_exception_when_join_record_has_errors
     repair_validations(Categorization) do
-      Categorization.validate { |r| r.errors[:base] << "Invalid Categorization" }
+      Categorization.validate { |r| r.errors.add(:base, "Invalid Categorization") }
       c = Category.new(name: "Fishing", authors: [Author.first])
       assert_raises(ActiveRecord::RecordInvalid) do
-        assert_deprecated { c.save! }
+        c.save!
       end
     end
   end
 
   def test_save_returns_falsy_when_join_record_has_errors
     repair_validations(Categorization) do
-      Categorization.validate { |r| r.errors[:base] << "Invalid Categorization" }
+      Categorization.validate { |r| r.errors.add(:base, "Invalid Categorization") }
       c = Category.new(name: "Fishing", authors: [Author.first])
-      assert_deprecated { assert_not c.save }
+      assert_not c.save
     end
   end
 
@@ -1325,11 +1350,11 @@ class HasManyThroughAssociationsTest < ActiveRecord::TestCase
     member = Member.create!
     Membership.create!(club: club, member: member)
 
-    club.favourites << member
-    assert_equal [member], club.favourites
+    club.favorites << member
+    assert_equal [member], club.favorites
 
     club.reload
-    assert_equal [member], club.favourites
+    assert_equal [member], club.favorites
   end
 
   def test_has_many_through_unscope_default_scope
@@ -1362,9 +1387,9 @@ class HasManyThroughAssociationsTest < ActiveRecord::TestCase
 
   def test_has_many_through_with_scope_that_should_not_be_fully_merged
     Club.has_many :distinct_memberships, -> { distinct }, class_name: "Membership"
-    Club.has_many :special_favourites, through: :distinct_memberships, source: :member
+    Club.has_many :special_favorites, through: :distinct_memberships, source: :member
 
-    assert_nil Club.new.special_favourites.distinct_value
+    assert_nil Club.new.special_favorites.distinct_value
   end
 
   def test_has_many_through_do_not_cache_association_reader_if_the_though_method_has_default_scopes

@@ -1,25 +1,34 @@
 # frozen_string_literal: true
 
+require "active_model/validations/comparability"
+require "active_model/validations/resolve_value"
 require "bigdecimal/util"
 
 module ActiveModel
   module Validations
     class NumericalityValidator < EachValidator # :nodoc:
-      CHECKS = { greater_than: :>, greater_than_or_equal_to: :>=,
-                 equal_to: :==, less_than: :<, less_than_or_equal_to: :<=,
-                 odd: :odd?, even: :even?, other_than: :!= }.freeze
+      include Comparability
+      include ResolveValue
 
-      RESERVED_OPTIONS = CHECKS.keys + [:only_integer]
+      RANGE_CHECKS = { in: :in? }
+      NUMBER_CHECKS = { odd: :odd?, even: :even? }
+
+      RESERVED_OPTIONS = COMPARE_CHECKS.keys + NUMBER_CHECKS.keys + RANGE_CHECKS.keys + [:only_integer, :only_numeric]
 
       INTEGER_REGEX = /\A[+-]?\d+\z/
 
       HEXADECIMAL_REGEX = /\A[+-]?0[xX]/
 
       def check_validity!
-        keys = CHECKS.keys - [:odd, :even]
-        options.slice(*keys).each do |option, value|
+        options.slice(*COMPARE_CHECKS.keys).each do |option, value|
           unless value.is_a?(Numeric) || value.is_a?(Proc) || value.is_a?(Symbol)
             raise ArgumentError, ":#{option} must be a number, a symbol or a proc"
+          end
+        end
+
+        options.slice(*RANGE_CHECKS.keys).each do |option, value|
+          unless value.is_a?(Range)
+            raise ArgumentError, ":#{option} must be a range"
           end
         end
       end
@@ -37,23 +46,18 @@ module ActiveModel
 
         value = parse_as_number(value, precision, scale)
 
-        options.slice(*CHECKS.keys).each do |option, option_value|
-          case option
-          when :odd, :even
-            unless value.to_i.public_send(CHECKS[option])
+        options.slice(*RESERVED_OPTIONS).each do |option, option_value|
+          if NUMBER_CHECKS.include?(option)
+            unless value.to_i.public_send(NUMBER_CHECKS[option])
               record.errors.add(attr_name, option, **filtered_options(value))
             end
-          else
-            case option_value
-            when Proc
-              option_value = option_value.call(record)
-            when Symbol
-              option_value = record.send(option_value)
+          elsif RANGE_CHECKS.include?(option)
+            unless value.public_send(RANGE_CHECKS[option], option_value)
+              record.errors.add(attr_name, option, **filtered_options(value).merge!(count: option_value))
             end
-
-            option_value = parse_as_number(option_value, precision, scale)
-
-            unless value.public_send(CHECKS[option], option_value)
+          elsif COMPARE_CHECKS.include?(option)
+            option_value = option_as_number(record, option_value, precision, scale)
+            unless value.public_send(COMPARE_CHECKS[option], option_value)
               record.errors.add(attr_name, option, **filtered_options(value).merge!(count: option_value))
             end
           end
@@ -61,9 +65,15 @@ module ActiveModel
       end
 
     private
+      def option_as_number(record, option_value, precision, scale)
+        parse_as_number(resolve_value(record, option_value), precision, scale)
+      end
+
       def parse_as_number(raw_value, precision, scale)
         if raw_value.is_a?(Float)
           parse_float(raw_value, precision, scale)
+        elsif raw_value.is_a?(BigDecimal)
+          round(raw_value, scale)
         elsif raw_value.is_a?(Numeric)
           raw_value
         elsif is_integer?(raw_value)
@@ -74,10 +84,18 @@ module ActiveModel
       end
 
       def parse_float(raw_value, precision, scale)
-        (scale ? raw_value.truncate(scale) : raw_value).to_d(precision)
+        round(raw_value, scale).to_d(precision)
+      end
+
+      def round(raw_value, scale)
+        scale ? raw_value.round(scale) : raw_value
       end
 
       def is_number?(raw_value, precision, scale)
+        if options[:only_numeric] && !raw_value.is_a?(Numeric)
+          return false
+        end
+
         !parse_as_number(raw_value, precision, scale).nil?
       rescue ArgumentError, TypeError
         false
@@ -98,14 +116,7 @@ module ActiveModel
       end
 
       def allow_only_integer?(record)
-        case options[:only_integer]
-        when Symbol
-          record.send(options[:only_integer])
-        when Proc
-          options[:only_integer].call(record)
-        else
-          options[:only_integer]
-        end
+        resolve_value(record, options[:only_integer])
       end
 
       def prepare_value_for_validation(value, record, attr_name)
@@ -137,10 +148,11 @@ module ActiveModel
 
     module HelperMethods
       # Validates whether the value of the specified attribute is numeric by
-      # trying to convert it to a float with Kernel.Float (if <tt>only_integer</tt>
-      # is +false+) or applying it to the regular expression <tt>/\A[\+\-]?\d+\z/</tt>
-      # (if <tt>only_integer</tt> is set to +true+). Precision of Kernel.Float values
-      # are guaranteed up to 15 digits.
+      # trying to convert it to a float with +Kernel.Float+ (if
+      # <tt>only_integer</tt> is +false+) or applying it to the regular
+      # expression <tt>/\A[\+\-]?\d+\z/</tt> (if <tt>only_integer</tt> is set to
+      # +true+). Precision of +Kernel.Float+ values are guaranteed up to 15
+      # digits.
       #
       #   class Person < ActiveRecord::Base
       #     validates_numericality_of :value, on: :create
@@ -149,28 +161,41 @@ module ActiveModel
       # Configuration options:
       # * <tt>:message</tt> - A custom error message (default is: "is not a number").
       # * <tt>:only_integer</tt> - Specifies whether the value has to be an
-      #   integer, e.g. an integral value (default is +false+).
+      #   integer (default is +false+).
+      # * <tt>:only_numeric</tt> - Specifies whether the value has to be an
+      #   instance of Numeric (default is +false+). The default behavior is to
+      #   attempt parsing the value if it is a String.
       # * <tt>:allow_nil</tt> - Skip validation if attribute is +nil+ (default is
       #   +false+). Notice that for Integer and Float columns empty strings are
       #   converted to +nil+.
       # * <tt>:greater_than</tt> - Specifies the value must be greater than the
-      #   supplied value.
+      #   supplied value. The default error message for this option is _"must be
+      #   greater than %{count}"_.
       # * <tt>:greater_than_or_equal_to</tt> - Specifies the value must be
-      #   greater than or equal the supplied value.
+      #   greater than or equal the supplied value. The default error message
+      #   for this option is _"must be greater than or equal to %{count}"_.
       # * <tt>:equal_to</tt> - Specifies the value must be equal to the supplied
-      #   value.
+      #   value. The default error message for this option is _"must be equal to
+      #   %{count}"_.
       # * <tt>:less_than</tt> - Specifies the value must be less than the
-      #   supplied value.
+      #   supplied value. The default error message for this option is _"must be
+      #   less than %{count}"_.
       # * <tt>:less_than_or_equal_to</tt> - Specifies the value must be less
-      #   than or equal the supplied value.
+      #   than or equal the supplied value. The default error message for this
+      #   option is _"must be less than or equal to %{count}"_.
       # * <tt>:other_than</tt> - Specifies the value must be other than the
-      #   supplied value.
-      # * <tt>:odd</tt> - Specifies the value must be an odd number.
-      # * <tt>:even</tt> - Specifies the value must be an even number.
+      #   supplied value. The default error message for this option is _"must be
+      #   other than %{count}"_.
+      # * <tt>:odd</tt> - Specifies the value must be an odd number. The default
+      #   error message for this option is _"must be odd"_.
+      # * <tt>:even</tt> - Specifies the value must be an even number. The
+      #   default error message for this option is _"must be even"_.
+      # * <tt>:in</tt> - Check that the value is within a range. The default
+      #   error message for this option is _"must be in %{count}"_.
       #
       # There is also a list of default options supported by every validator:
       # +:if+, +:unless+, +:on+, +:allow_nil+, +:allow_blank+, and +:strict+ .
-      # See <tt>ActiveModel::Validations#validates</tt> for more information
+      # See ActiveModel::Validations::ClassMethods#validates for more information.
       #
       # The following checks can also be supplied with a proc or a symbol which
       # corresponds to a method:

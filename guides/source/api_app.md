@@ -131,7 +131,7 @@ If you're building a Rails application that will be an API server first and
 foremost, you can start with a more limited subset of Rails and add in features
 as needed.
 
-### Creating a new application
+### Creating a New Application
 
 You can generate a new api Rails app:
 
@@ -151,19 +151,19 @@ This will do three main things for you:
 - Configure the generators to skip generating views, helpers, and assets when
   you generate a new resource.
 
-### Changing an existing application
+### Changing an Existing Application
 
 If you want to take an existing application and make it an API one, read the
 following steps.
 
-In `config/application.rb` add the following line at the top of the `Application`
+In `config/application.rb`, add the following line at the top of the `Application`
 class definition:
 
 ```ruby
 config.api_only = true
 ```
 
-In `config/environments/development.rb`, set `config.debug_exception_response_format`
+In `config/environments/development.rb`, set [`config.debug_exception_response_format`][]
 to configure the format used in responses when errors occur in development mode.
 
 To render an HTML page with debugging information, use the value `:default`.
@@ -194,6 +194,8 @@ class ApplicationController < ActionController::API
 end
 ```
 
+[`config.debug_exception_response_format`]: configuring.html#config-debug-exception-response-format
+
 Choosing Middleware
 --------------------
 
@@ -203,6 +205,7 @@ An API application comes with the following middleware by default:
 - `Rack::Sendfile`
 - `ActionDispatch::Static`
 - `ActionDispatch::Executor`
+- `ActionDispatch::ServerTiming`
 - `ActiveSupport::Cache::Strategy::LocalCache::Middleware`
 - `Rack::Runtime`
 - `ActionDispatch::RequestId`
@@ -231,13 +234,16 @@ You can get a list of all middleware in your application via:
 $ bin/rails middleware
 ```
 
-### Using the Cache Middleware
+### Using Rack::Cache
 
-By default, Rails will add a middleware that provides a cache store based on
-the configuration of your application (memcache by default). This means that
-the built-in HTTP cache will rely on it.
+When used with Rails, `Rack::Cache` uses the Rails cache store for its
+entity and meta stores. This means that if you use memcache, for your
+Rails app, for instance, the built-in HTTP cache will use memcache.
 
-For instance, using the `stale?` method:
+To make use of `Rack::Cache`, you first need to add the `rack-cache` gem
+to `Gemfile`, and set `config.action_dispatch.rack_cache` to `true`.
+To enable its functionality, you will want to use `stale?` in your
+controller. Here’s an example of `stale?` in use.
 
 ```ruby
 def show
@@ -254,7 +260,7 @@ with `@post.updated_at`. If the header is newer than the last modified, this
 action will return a "304 Not Modified" response. Otherwise, it will render the
 response and include a `Last-Modified` header in it.
 
-Normally, this mechanism is used on a per-client basis. The cache middleware
+Normally, this mechanism is used on a per-client basis. `Rack::Cache`
 allows us to share this caching mechanism across clients. We can enable
 cross-client caching in the call to `stale?`:
 
@@ -268,7 +274,7 @@ def show
 end
 ```
 
-This means that the cache middleware will store off the `Last-Modified` value
+This means that `Rack::Cache` will store off the `Last-Modified` value
 for a URL in the Rails cache, and add an `If-Modified-Since` header to any
 subsequent inbound requests for the same URL.
 
@@ -284,12 +290,12 @@ If your front-end server supports accelerated file sending, `Rack::Sendfile`
 will offload the actual file sending work to the front-end server.
 
 You can configure the name of the header that your front-end server uses for
-this purpose using `config.action_dispatch.x_sendfile_header` in the appropriate
+this purpose using [`config.action_dispatch.x_sendfile_header`][] in the appropriate
 environment's configuration file.
 
 You can learn more about how to use `Rack::Sendfile` with popular
 front-ends in [the Rack::Sendfile
-documentation](https://www.rubydoc.info/github/rack/rack/master/Rack/Sendfile).
+documentation](https://www.rubydoc.info/gems/rack/Rack/Sendfile).
 
 Here are some values for this header for some popular servers, once these servers are configured to support
 accelerated file sending:
@@ -304,6 +310,8 @@ config.action_dispatch.x_sendfile_header = "X-Accel-Redirect"
 
 Make sure to configure your server to support these options following the
 instructions in the `Rack::Sendfile` documentation.
+
+[`config.action_dispatch.x_sendfile_header`]: configuring.html#config-action-dispatch-x-sendfile-header
 
 ### Using ActionDispatch::Request
 
@@ -344,7 +352,7 @@ The following middlewares, used for session management, are excluded from API ap
 The trick to adding these back in is that, by default, they are passed `session_options`
 when added (including the session key), so you can't just add a `session_store.rb` initializer, add
 `use ActionDispatch::Session::CookieStore` and have sessions functioning as usual.  (To be clear: sessions
-may work, but your session options will be ignored - i.e the session key will default to `_session_id`)
+may work, but your session options will be ignored - i.e. the session key will default to `_session_id`)
 
 Instead of the initializer, you'll have to set the relevant options somewhere before your middleware is
 built (like `config/application.rb`) and pass them to your preferred middleware, like this:

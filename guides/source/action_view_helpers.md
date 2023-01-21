@@ -12,7 +12,7 @@ After reading this guide, you will know:
 
 --------------------------------------------------------------------------------
 
-Overview of helpers provided by Action View
+Overview of Helpers Provided by Action View
 -------------------------------------------
 
 WIP: Not all the helpers are listed here. For a full list see the [API documentation](https://api.rubyonrails.org/classes/ActionView/Helpers.html)
@@ -23,13 +23,15 @@ The following is only a brief overview summary of the helpers available in Actio
 
 This module provides methods for generating HTML that links views to assets such as images, JavaScript files, stylesheets, and feeds.
 
-By default, Rails links to these assets on the current host in the public folder, but you can direct Rails to link to assets from a dedicated assets server by setting `config.asset_host` in the application configuration, typically in `config/environments/production.rb`. For example, let's say your asset host is `assets.example.com`:
+By default, Rails links to these assets on the current host in the public folder, but you can direct Rails to link to assets from a dedicated assets server by setting [`config.asset_host`][] in the application configuration, typically in `config/environments/production.rb`. For example, let's say your asset host is `assets.example.com`:
 
 ```ruby
 config.asset_host = "assets.example.com"
 image_tag("rails.png")
 # => <img src="http://assets.example.com/images/rails.png" />
 ```
+
+[`config.asset_host`]: configuring.html#config-asset-host
 
 #### auto_discovery_link_tag
 
@@ -103,7 +105,7 @@ Returns a stylesheet link tag for the sources specified as arguments. If you don
 
 ```ruby
 stylesheet_link_tag "application"
-# => <link href="/assets/application.css" media="screen" rel="stylesheet" />
+# => <link href="/assets/application.css" rel="stylesheet" />
 ```
 
 #### stylesheet_path
@@ -333,13 +335,22 @@ Formats a number into a currency string (e.g., $13.65).
 number_to_currency(1234567890.50) # => $1,234,567,890.50
 ```
 
+#### number_to_human
+
+Pretty prints (formats and approximates) a number so it is more readable by users; useful for numbers that can get very large.
+
+```ruby
+number_to_human(1234)    # => 1.23 Thousand
+number_to_human(1234567) # => 1.23 Million
+```
+
 #### number_to_human_size
 
 Formats the bytes in size into a more understandable representation; useful for reporting file sizes to users.
 
 ```ruby
-number_to_human_size(1234)    # => 1.2 KB
-number_to_human_size(1234567) # => 1.2 MB
+number_to_human_size(1234)    # => 1.21 KB
+number_to_human_size(1234567) # => 1.18 MB
 ```
 
 #### number_to_percentage
@@ -406,6 +417,7 @@ end
 Sanitizes a block of CSS code.
 
 #### strip_links(html)
+
 Strips all link tags from text leaving just the link text.
 
 ```ruby

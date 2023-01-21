@@ -3,6 +3,7 @@
 require "active_support"
 require "active_support/core_ext/enumerable"
 require "active_support/core_ext/object/blank"
+require "rails/deprecator"
 
 require "thor"
 
@@ -10,13 +11,13 @@ module Rails
   module Command
     extend ActiveSupport::Autoload
 
-    autoload :Spellchecker
     autoload :Behavior
     autoload :Base
 
     include Behavior
 
-    HELP_MAPPINGS = %w(-h -? --help)
+    HELP_MAPPINGS = %w(-h -? --help).to_set
+    VERSION_MAPPINGS = %w(-v --version).to_set
 
     class << self
       def hidden_commands # :nodoc:
@@ -27,32 +28,26 @@ module Rails
         ENV["RAILS_ENV"].presence || ENV["RACK_ENV"].presence || "development"
       end
 
-      # Receives a namespace, arguments and the behavior to invoke the command.
+      # Receives a namespace, arguments, and the behavior to invoke the command.
       def invoke(full_namespace, args = [], **config)
-        namespace = full_namespace = full_namespace.to_s
+        full_namespace = full_namespace.to_s
 
-        if char = namespace =~ /:(\w+)$/
-          command_name, namespace = $1, namespace.slice(0, char)
-        else
-          command_name = namespace
-        end
+        namespace, command_name = split_namespace(full_namespace)
 
-        command_name, namespace = "help", "help" if command_name.blank? || HELP_MAPPINGS.include?(command_name)
-        command_name, namespace = "version", "version" if %w( -v --version ).include?(command_name)
+        args = ["--help"] if rails_new_with_no_path?(args)
 
-        # isolate ARGV to ensure that commands depend only on the args they are given
-        args = args.dup # args might *be* ARGV so dup before clearing
-        old_argv = ARGV.dup
-        ARGV.clear
+        original_argv = ARGV.dup
+        ARGV.replace(args)
 
         command = find_by_namespace(namespace, command_name)
         if command && command.all_commands[command_name]
           command.perform(command_name, args, config)
         else
+          args = ["--describe", full_namespace] if HELP_MAPPINGS.include?(args[0])
           find_by_namespace("rake").perform(full_namespace, args, config)
         end
       ensure
-        ARGV.replace(old_argv)
+        ARGV.replace(original_argv)
       end
 
       # Rails finds namespaces similar to Thor, it only adds one rule:
@@ -60,14 +55,12 @@ module Rails
       # Command names must end with "_command.rb". This is required because Rails
       # looks in load paths and loads the command just before it's going to be used.
       #
-      #   find_by_namespace :webrat, :rails, :integration
+      #   find_by_namespace :webrat, :integration
       #
       # Will search for the following commands:
       #
-      #   "rails:webrat", "webrat:integration", "webrat"
+      #   "webrat", "webrat:integration", "rails:webrat", "rails:webrat:integration"
       #
-      # Notice that "rails:commands:webrat" could be loaded as well, what
-      # Rails looks for is the first and last parts of the namespace.
       def find_by_namespace(namespace, command_name = nil) # :nodoc:
         lookups = [ namespace ]
         lookups << "#{namespace}:#{command_name}" if command_name
@@ -88,20 +81,30 @@ module Rails
         end
       end
 
-      def print_commands # :nodoc:
-        commands.each { |command| puts("  #{command}") }
+      def printing_commands # :nodoc:
+        lookup!
+
+        (subclasses - hidden_commands).flat_map(&:printing_commands)
       end
 
       private
-        COMMANDS_IN_USAGE = %w(generate console server test test:system dbconsole new)
-        private_constant :COMMANDS_IN_USAGE
+        def rails_new_with_no_path?(args)
+          args == ["new"]
+        end
 
-        def commands
-          lookup!
-
-          visible_commands = (subclasses - hidden_commands).flat_map(&:printing_commands)
-
-          (visible_commands - COMMANDS_IN_USAGE).sort
+        def split_namespace(namespace)
+          case namespace
+          when /^(.+):(\w+)$/
+            [$1, $2]
+          when ""
+            ["help", "help"]
+          when HELP_MAPPINGS, "help"
+            ["help", "help_extended"]
+          when VERSION_MAPPINGS
+            ["version", "version"]
+          else
+            [namespace, namespace]
+          end
         end
 
         def command_type # :doc:

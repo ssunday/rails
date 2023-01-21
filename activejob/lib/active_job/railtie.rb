@@ -8,30 +8,55 @@ module ActiveJob
   class Railtie < Rails::Railtie # :nodoc:
     config.active_job = ActiveSupport::OrderedOptions.new
     config.active_job.custom_serializers = []
+    config.active_job.log_query_tags_around_perform = true
+
+    initializer "active_job.deprecator", before: :load_environment_config do |app|
+      app.deprecators[:active_job] = ActiveJob.deprecator
+    end
 
     initializer "active_job.logger" do
       ActiveSupport.on_load(:active_job) { self.logger = ::Rails.logger }
     end
 
-    initializer "active_job.set_configs" do
-      config.after_initialize do |app|
-        options = app.config.active_job
-        options.queue_adapter ||= :async
-
-        custom_serializers = options.delete(:custom_serializers)
+    initializer "active_job.custom_serializers" do |app|
+      config.after_initialize do
+        custom_serializers = app.config.active_job.custom_serializers
         ActiveJob::Serializers.add_serializers custom_serializers
+      end
+    end
 
-        ActiveSupport.on_load(:active_job) do
-          options.each { |k, v| send("#{k}=", v) }
-        end
+    initializer "active_job.set_configs" do |app|
+      options = app.config.active_job
+      options.queue_adapter ||= :async
 
-        ActiveSupport.on_load(:action_dispatch_integration_test) do
-          include ActiveJob::TestHelper
+      config.after_initialize do
+        options.each do |k, v|
+          k = "#{k}="
+          if ActiveJob.respond_to?(k)
+            ActiveJob.send(k, v)
+          end
         end
       end
 
-      ActiveSupport.on_load(:active_record) do
-        self.destroy_association_async_job = ActiveRecord::DestroyAssociationAsyncJob
+      ActiveSupport.on_load(:active_job) do
+        # Configs used in other initializers
+        options = options.except(
+          :log_query_tags_around_perform,
+          :custom_serializers
+        )
+
+        options.each do |k, v|
+          k = "#{k}="
+          if ActiveJob.respond_to?(k)
+            ActiveJob.send(k, v)
+          elsif respond_to? k
+            send(k, v)
+          end
+        end
+      end
+
+      ActiveSupport.on_load(:action_dispatch_integration_test) do
+        include ActiveJob::TestHelper
       end
     end
 
@@ -41,6 +66,20 @@ module ActiveJob
           app.reloader.wrap do
             inner.call
           end
+        end
+      end
+    end
+
+    initializer "active_job.query_log_tags" do |app|
+      query_logs_tags_enabled = app.config.respond_to?(:active_record) &&
+        app.config.active_record.query_log_tags_enabled &&
+        app.config.active_job.log_query_tags_around_perform
+
+      if query_logs_tags_enabled
+        app.config.active_record.query_log_tags |= [:job]
+
+        ActiveSupport.on_load(:active_record) do
+          ActiveRecord::QueryLogs.taggings[:job] = ->(context) { context[:job].class.name if context[:job] }
         end
       end
     end

@@ -56,17 +56,22 @@ module ActiveRecord
         class_attribute :lock_optimistically, instance_writer: false, default: true
       end
 
-      def locking_enabled? #:nodoc:
+      def locking_enabled? # :nodoc:
         self.class.locking_enabled?
       end
 
-      def increment!(*, **) #:nodoc:
+      def increment!(*, **) # :nodoc:
         super.tap do
           if locking_enabled?
             self[self.class.locking_column] += 1
             clear_attribute_change(self.class.locking_column)
           end
         end
+      end
+
+      def initialize_dup(other) # :nodoc:
+        super
+        _clear_locking_column if locking_enabled?
       end
 
       private
@@ -89,7 +94,11 @@ module ActiveRecord
 
           begin
             locking_column = self.class.locking_column
-            previous_lock_value = attribute_before_type_cast(locking_column)
+            lock_attribute_was = @attributes[locking_column]
+
+            update_constraints = _query_constraints_hash
+            update_constraints[locking_column] = _lock_value_for_database(locking_column)
+
             attribute_names = attribute_names.dup if attribute_names.frozen?
             attribute_names << locking_column
 
@@ -97,8 +106,7 @@ module ActiveRecord
 
             affected_rows = self.class._update_record(
               attributes_with_values(attribute_names),
-              @primary_key => id_in_database,
-              locking_column => @attributes[locking_column].original_value_for_database
+              update_constraints
             )
 
             if affected_rows != 1
@@ -109,7 +117,7 @@ module ActiveRecord
 
           # If something went wrong, revert the locking_column value.
           rescue Exception
-            self[locking_column] = previous_lock_value.to_i
+            @attributes[locking_column] = lock_attribute_was
             raise
           end
         end
@@ -119,16 +127,29 @@ module ActiveRecord
 
           locking_column = self.class.locking_column
 
-          affected_rows = self.class._delete_record(
-            @primary_key => id_in_database,
-            locking_column => attribute_before_type_cast(locking_column)
-          )
+          delete_constraints = _query_constraints_hash
+          delete_constraints[locking_column] = _lock_value_for_database(locking_column)
+
+          affected_rows = self.class._delete_record(delete_constraints)
 
           if affected_rows != 1
             raise ActiveRecord::StaleObjectError.new(self, "destroy")
           end
 
           affected_rows
+        end
+
+        def _lock_value_for_database(locking_column)
+          if will_save_change_to_attribute?(locking_column)
+            @attributes[locking_column].value_for_database
+          else
+            @attributes[locking_column].original_value_for_database
+          end
+        end
+
+        def _clear_locking_column
+          self[self.class.locking_column] = nil
+          clear_attribute_change(self.class.locking_column)
         end
 
         module ClassMethods
@@ -148,10 +169,7 @@ module ActiveRecord
           end
 
           # The version column used for optimistic locking. Defaults to +lock_version+.
-          def locking_column
-            @locking_column = DEFAULT_LOCKING_COLUMN unless defined?(@locking_column)
-            @locking_column
-          end
+          attr_reader :locking_column
 
           # Reset the column used for optimistic locking back to the +lock_version+ default.
           def reset_locking_column
@@ -171,6 +189,14 @@ module ActiveRecord
             end
             super
           end
+
+          private
+            def inherited(base)
+              super
+              base.class_eval do
+                @locking_column = DEFAULT_LOCKING_COLUMN
+              end
+            end
         end
     end
 

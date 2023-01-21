@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 ActiveRecord::Schema.define do
-  enable_extension!("uuid-ossp", ActiveRecord::Base.connection)
-  enable_extension!("pgcrypto",  ActiveRecord::Base.connection) if ActiveRecord::Base.connection.supports_pgcrypto_uuid?
+  ActiveRecord::TestCase.enable_extension!("uuid-ossp", ActiveRecord::Base.connection)
+  ActiveRecord::TestCase.enable_extension!("pgcrypto",  ActiveRecord::Base.connection) if ActiveRecord::Base.connection.supports_pgcrypto_uuid?
 
   uuid_default = connection.supports_pgcrypto_uuid? ? {} : { default: "uuid_generate_v4()" }
 
@@ -20,8 +20,11 @@ ActiveRecord::Schema.define do
     t.date :modified_date_function, default: -> { "now()" }
     t.date :fixed_date, default: "2004-01-01"
     t.datetime :modified_time, default: -> { "CURRENT_TIMESTAMP" }
+    t.datetime :modified_time_without_precision, precision: nil, default: -> { "CURRENT_TIMESTAMP" }
+    t.datetime :modified_time_with_precision_0, precision: 0, default: -> { "CURRENT_TIMESTAMP" }
     t.datetime :modified_time_function, default: -> { "now()" }
     t.datetime :fixed_time, default: "2004-01-01 00:00:00.000000-00"
+    t.timestamptz :fixed_time_with_time_zone, default: "2004-01-01 01:00:00+1"
     t.column :char1, "char(1)", default: "Y"
     t.string :char2, limit: 50, default: "a varchar field"
     t.text :char3, default: "a text field"
@@ -104,9 +107,32 @@ _SQL
     t.decimal :decimal_array_default, array: true, default: [1.23, 3.45]
   end
 
+  create_table :uuid_comments, force: true, id: false do |t|
+    t.uuid :uuid, primary_key: true, **uuid_default
+    t.string :content
+  end
+
+  create_table :uuid_entries, force: true, id: false do |t|
+    t.uuid :uuid, primary_key: true, **uuid_default
+    t.string :entryable_type, null: false
+    t.uuid :entryable_uuid, null: false
+  end
+
   create_table :uuid_items, force: true, id: false do |t|
     t.uuid :uuid, primary_key: true, **uuid_default
     t.string :title
+  end
+
+  create_table :uuid_messages, force: true, id: false do |t|
+    t.uuid :uuid, primary_key: true, **uuid_default
+    t.string :subject
+  end
+
+  create_table :test_exclusion_constraints, force: true do |t|
+    t.date :start_date
+    t.date :end_date
+
+    t.exclusion_constraint "daterange(start_date, end_date) WITH &&", using: :gist, where: "start_date IS NOT NULL AND end_date IS NOT NULL", name: "test_exclusion_constraints_date_overlap"
   end
 
   if supports_partitioned_indexes?

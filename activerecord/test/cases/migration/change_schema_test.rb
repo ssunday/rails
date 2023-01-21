@@ -183,7 +183,7 @@ module ActiveRecord
           end
         end
 
-        assert_equal "you can't redefine the primary key column 'id'. To define a custom primary key, pass { id: false } to create_table.", error.message
+        assert_equal "you can't redefine the primary key column 'id' on 'testings'. To define a custom primary key, pass { id: false } to create_table.", error.message
       end
 
       def test_create_table_raises_when_redefining_custom_primary_key_column
@@ -193,7 +193,7 @@ module ActiveRecord
           end
         end
 
-        assert_equal "you can't redefine the primary key column 'testing_id'. To define a custom primary key, pass { id: false } to create_table.", error.message
+        assert_equal "you can't redefine the primary key column 'testing_id' on 'testings'. To define a custom primary key, pass { id: false } to create_table.", error.message
       end
 
       def test_create_table_raises_when_defining_existing_column
@@ -204,7 +204,7 @@ module ActiveRecord
           end
         end
 
-        assert_equal "you can't define an already defined column 'testing_column'.", error.message
+        assert_equal "you can't define an already defined column 'testing_column' on 'testings'.", error.message
       end
 
       def test_create_table_with_timestamps_should_create_datetime_columns
@@ -286,7 +286,63 @@ module ActiveRecord
         elsif current_adapter?(:OracleAdapter)
           assert_equal "TIMESTAMP(6)", column.sql_type
         else
-          assert_equal connection.type_to_sql("datetime"), column.sql_type
+          assert_equal connection.type_to_sql("datetime(6)"), column.sql_type
+        end
+      end
+
+      def test_add_column_with_postgresql_datetime_type
+        connection.create_table :testings do |t|
+          t.column :foo, :datetime
+        end
+
+        column = connection.columns(:testings).find { |c| c.name == "foo" }
+
+        assert_equal :datetime, column.type
+
+        if current_adapter?(:PostgreSQLAdapter)
+          assert_equal "timestamp(6) without time zone", column.sql_type
+        elsif current_adapter?(:Mysql2Adapter)
+          sql_type = supports_datetime_with_precision? ? "datetime(6)" : "datetime"
+          assert_equal sql_type, column.sql_type
+        else
+          assert_equal connection.type_to_sql("datetime(6)"), column.sql_type
+        end
+      end
+
+      if current_adapter?(:PostgreSQLAdapter)
+        def test_add_column_with_datetime_in_timestamptz_mode
+          with_postgresql_datetime_type(:timestamptz) do
+            connection.create_table :testings do |t|
+              t.column :foo, :datetime
+            end
+
+            column = connection.columns(:testings).find { |c| c.name == "foo" }
+
+            assert_equal :datetime, column.type
+            assert_equal "timestamp(6) with time zone", column.sql_type
+          end
+        end
+      end
+
+      def test_change_column_with_timestamp_type
+        connection.create_table :testings do |t|
+          t.column :foo, :datetime, null: false
+        end
+
+        connection.change_column :testings, :foo, :timestamp
+
+        column = connection.columns(:testings).find { |c| c.name == "foo" }
+
+        assert_equal :datetime, column.type
+
+        if current_adapter?(:PostgreSQLAdapter)
+          assert_equal "timestamp without time zone", column.sql_type
+        elsif current_adapter?(:Mysql2Adapter)
+          assert_equal "timestamp", column.sql_type
+        elsif current_adapter?(:OracleAdapter)
+          assert_equal "TIMESTAMP(6)", column.sql_type
+        else
+          assert_equal connection.type_to_sql("datetime(6)"), column.sql_type
         end
       end
 

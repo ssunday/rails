@@ -20,12 +20,6 @@ module GeneratorsTestHelper
   include ActiveSupport::Testing::Stream
   include ActiveSupport::Testing::MethodCallAssertions
 
-  GemfileEntry = Struct.new(:name, :version, :comment, :options, :commented_out) do
-    def initialize(name, version, comment, options = {}, commented_out = false)
-      super
-    end
-  end
-
   def self.included(base)
     base.class_eval do
       destination File.expand_path("../fixtures/tmp", __dir__)
@@ -80,11 +74,7 @@ module GeneratorsTestHelper
   end
 
   def evaluate_template(file, locals = {})
-    erb = if ERB.instance_method(:initialize).parameters.assoc(:key) # Ruby 2.6+
-      ERB.new(File.read(file), trim_mode: "-", eoutvar: "@output_buffer")
-    else
-      ERB.new(File.read(file), nil, "-", "@output_buffer")
-    end
+    erb = ERB.new(File.read(file), trim_mode: "-", eoutvar: "@output_buffer")
     context = Class.new do
       locals.each do |local, value|
         class_attribute local, default: value
@@ -96,12 +86,13 @@ module GeneratorsTestHelper
   private
     def gemfile_locals
       {
+        rails_prerelease: false,
         skip_active_storage: true,
         depend_on_bootsnap: false,
-        depend_on_listen: false,
-        spring_install: false,
         depends_on_system_test: false,
         options: ActiveSupport::OrderedOptions.new,
+        skip_sprockets: false,
+        bundler_windows_platforms: "windows",
       }
     end
 end

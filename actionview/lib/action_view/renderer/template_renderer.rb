@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module ActionView
-  class TemplateRenderer < AbstractRenderer #:nodoc:
+  class TemplateRenderer < AbstractRenderer # :nodoc:
     def render(context, options)
       @details = extract_details(options)
       template = determine_template(options)
@@ -26,7 +26,11 @@ module ActionView
           if File.exist?(options[:file])
             Template::RawFile.new(options[:file])
           else
-            raise ArgumentError, "`render file:` should be given the absolute path to a file. '#{options[:file]}' was given instead"
+            if Pathname.new(options[:file]).absolute?
+              raise ArgumentError, "File #{options[:file]} does not exist"
+            else
+              raise ArgumentError, "`render file:` should be given the absolute path to a file. '#{options[:file]}' was given instead"
+            end
           end
         elsif options.key?(:inline)
           handler = Template.handler_for_extension(options[:type] || "erb")
@@ -45,7 +49,7 @@ module ActionView
             @lookup_context.find_template(options[:template], options[:prefixes], false, keys, @details)
           end
         else
-          raise ArgumentError, "You invoked render but did not give any of :partial, :template, :inline, :file, :plain, :html or :body option."
+          raise ArgumentError, "You invoked render but did not give any of :body, :file, :html, :inline, :partial, :plain, :renderable, or :template option."
         end
       end
 
@@ -56,7 +60,8 @@ module ActionView
           ActiveSupport::Notifications.instrument(
             "render_template.action_view",
             identifier: template.identifier,
-            layout: layout && layout.virtual_path
+            layout: layout && layout.virtual_path,
+            locals: locals
           ) do
             template.render(view, locals) { |*name| view._layout_for(*name) }
           end

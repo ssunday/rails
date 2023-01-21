@@ -17,7 +17,8 @@ module ActionView
     # Prepares the context by setting the appropriate instance variables.
     def _prepare_context
       @view_flow     = OutputFlow.new
-      @output_buffer = nil
+      @output_buffer = ActionView::OutputBuffer.new
+      @virtual_path  = nil
     end
 
     # Encapsulates the interaction with the view flow so it

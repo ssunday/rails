@@ -24,7 +24,7 @@ module Rails
   # * creating initializers
   # * configuring a Rails framework for the application, like setting a generator
   # * adding <tt>config.*</tt> keys to the environment
-  # * setting up a subscriber with <tt>ActiveSupport::Notifications</tt>
+  # * setting up a subscriber with ActiveSupport::Notifications
   # * adding Rake tasks
   #
   # == Creating a Railtie
@@ -120,16 +120,16 @@ module Rails
   # this less confusing for everyone.
   # It can be used like this:
   #
-  # class MyRailtie < Rails::Railtie
-  #   server do
-  #     WebpackServer.start
+  #   class MyRailtie < Rails::Railtie
+  #     server do
+  #       WebpackServer.start
+  #     end
   #   end
-  # end
   #
   # == Application and Engine
   #
   # An engine is nothing more than a railtie with some initializers already set. And since
-  # <tt>Rails::Application</tt> is an engine, the same configuration described here can be
+  # Rails::Application is an engine, the same configuration described here can be
   # used in both.
   #
   # Be sure to look at the documentation of those specific classes for more information.
@@ -146,7 +146,7 @@ module Rails
       delegate :config, to: :instance
 
       def subclasses
-        super.reject(&:abstract_railtie?)
+        super.reject(&:abstract_railtie?).sort
       end
 
       def rake_tasks(&blk)
@@ -191,25 +191,44 @@ module Rails
         instance.configure(&block)
       end
 
+      def <=>(other) # :nodoc:
+        load_index <=> other.load_index
+      end
+
+      def inherited(subclass)
+        subclass.increment_load_index
+        super
+      end
+
+      protected
+        attr_reader :load_index
+
+        def increment_load_index
+          @@load_counter ||= 0
+          @load_index = (@@load_counter += 1)
+        end
+
       private
         def generate_railtie_name(string)
           ActiveSupport::Inflector.underscore(string).tr("/", "_")
         end
 
         def respond_to_missing?(name, _)
+          return super if abstract_railtie?
+
           instance.respond_to?(name) || super
         end
 
         # If the class method does not have a method, then send the method call
         # to the Railtie instance.
         def method_missing(name, *args, &block)
-          if instance.respond_to?(name)
+          if !abstract_railtie? && instance.respond_to?(name)
             instance.public_send(name, *args, &block)
           else
             super
           end
         end
-        ruby2_keywords(:method_missing) if respond_to?(:ruby2_keywords, true)
+        ruby2_keywords(:method_missing)
 
         # receives an instance variable identifier, set the variable value if is
         # blank and append given block to value, which will be used later in
@@ -224,13 +243,17 @@ module Rails
 
     delegate :railtie_name, to: :class
 
-    def initialize #:nodoc:
+    def initialize # :nodoc:
       if self.class.abstract_railtie?
         raise "#{self.class.name} is abstract, you cannot instantiate it directly."
       end
     end
 
-    def configure(&block) #:nodoc:
+    def inspect # :nodoc:
+      "#<#{self.class.name}>"
+    end
+
+    def configure(&block) # :nodoc:
       instance_eval(&block)
     end
 
@@ -241,29 +264,29 @@ module Rails
       @config ||= Railtie::Configuration.new
     end
 
-    def railtie_namespace #:nodoc:
+    def railtie_namespace # :nodoc:
       @railtie_namespace ||= self.class.module_parents.detect { |n| n.respond_to?(:railtie_namespace) }
     end
 
     protected
-      def run_console_blocks(app) #:nodoc:
+      def run_console_blocks(app) # :nodoc:
         each_registered_block(:console) { |block| block.call(app) }
       end
 
-      def run_generators_blocks(app) #:nodoc:
+      def run_generators_blocks(app) # :nodoc:
         each_registered_block(:generators) { |block| block.call(app) }
       end
 
-      def run_runner_blocks(app) #:nodoc:
+      def run_runner_blocks(app) # :nodoc:
         each_registered_block(:runner) { |block| block.call(app) }
       end
 
-      def run_tasks_blocks(app) #:nodoc:
+      def run_tasks_blocks(app) # :nodoc:
         extend Rake::DSL
         each_registered_block(:rake_tasks) { |block| instance_exec(app, &block) }
       end
 
-      def run_server_blocks(app) #:nodoc:
+      def run_server_blocks(app) # :nodoc:
         each_registered_block(:server) { |block| block.call(app) }
       end
 

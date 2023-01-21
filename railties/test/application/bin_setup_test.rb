@@ -1,11 +1,10 @@
 # frozen_string_literal: true
 
 require "isolation/abstract_unit"
-require "chdir_helpers"
 
 module ApplicationTests
   class BinSetupTest < ActiveSupport::TestCase
-    include ActiveSupport::Testing::Isolation, ChdirHelpers
+    include ActiveSupport::Testing::Isolation
 
     setup :build_app
     teardown :teardown_app
@@ -29,7 +28,7 @@ module ApplicationTests
     end
 
     def test_bin_setup_output
-      chdir(app_path) do
+      Dir.chdir(app_path) do
         # SQLite3 seems to auto-create the database on first checkout.
         rails "db:system:change", "--to=postgresql"
         rails "db:drop", allow_failure: true
@@ -52,10 +51,6 @@ module ApplicationTests
         assert_equal(<<~OUTPUT, output)
           == Installing dependencies ==
           The Gemfile's dependencies are satisfied
-          yarn install
-          [1/4] Resolving packages...
-          success Already up-to-date.
-          Done in 0.00s.
 
           == Preparing database ==
           Created database 'app_development'

@@ -28,6 +28,20 @@ class AssertionsTest < ActiveSupport::TestCase
     assert_equal "custom", e.message
   end
 
+  def test_assert_raises_with_match_pass
+    assert_raises(ArgumentError, match: /incorrect/i) do
+      raise ArgumentError, "Incorrect argument"
+    end
+  end
+
+  def test_assert_raises_with_match_fail
+    assert_raises(Minitest::Assertion, match: "Expected /incorrect/i to match \"Wrong argument\".") do
+      assert_raises(ArgumentError, match: /incorrect/i) do
+        raise ArgumentError, "Wrong argument"
+      end
+    end
+  end
+
   def test_assert_no_difference_pass
     assert_no_difference "@object.num" do
       # ...
@@ -40,7 +54,7 @@ class AssertionsTest < ActiveSupport::TestCase
         @object.increment
       end
     end
-    assert_equal "\"@object.num\" didn't change by 0.\nExpected: 0\n  Actual: 1", error.message
+    assert_equal "\"@object.num\" didn't change by 0, but by 1.\nExpected: 0\n  Actual: 1", error.message
   end
 
   def test_assert_no_difference_with_message_fail
@@ -49,7 +63,7 @@ class AssertionsTest < ActiveSupport::TestCase
         @object.increment
       end
     end
-    assert_equal "Object Changed.\n\"@object.num\" didn't change by 0.\nExpected: 0\n  Actual: 1", error.message
+    assert_equal "Object Changed.\n\"@object.num\" didn't change by 0, but by 1.\nExpected: 0\n  Actual: 1", error.message
   end
 
   def test_assert_no_difference_with_multiple_expressions_pass
@@ -143,7 +157,17 @@ class AssertionsTest < ActiveSupport::TestCase
         @object.increment
       end
     end
-    assert_equal "Object Changed.\n\"@object.num\" didn't change by 0.\nExpected: 0\n  Actual: 1", error.message
+    assert_equal "Object Changed.\n\"@object.num\" didn't change by 0, but by 1.\nExpected: 0\n  Actual: 1", error.message
+  end
+
+  def test_assert_difference_message_includes_change
+    error = assert_raises Minitest::Assertion do
+      assert_difference "@object.num", +5 do
+        @object.increment
+        @object.increment
+      end
+    end
+    assert_equal "\"@object.num\" didn't change by 5, but by 2.\nExpected: 5\n  Actual: 2", error.message
   end
 
   def test_hash_of_lambda_expressions
@@ -192,7 +216,8 @@ class AssertionsTest < ActiveSupport::TestCase
         @object.increment
       end
     end
-    assert_equal "Expected change from nil", error.message
+
+    assert_equal "Expected change from nil, got 0", error.message
   end
 
   def test_assert_changes_with_to_option
@@ -277,11 +302,42 @@ class AssertionsTest < ActiveSupport::TestCase
       end
     end
 
-    assert_equal "@object.num should be 1.\nExpected change to 1\n", error.message
+    assert_equal "@object.num should be 1.\nExpected change to 1, got -1\n", error.message
   end
 
   def test_assert_no_changes_pass
     assert_no_changes "@object.num" do
+      # ...
+    end
+  end
+
+  def test_assert_no_changes_with_from_option
+    assert_no_changes "@object.num", from: 0 do
+      # ...
+    end
+  end
+
+  def test_assert_no_changes_with_from_option_with_wrong_value
+    assert_raises Minitest::Assertion do
+      assert_no_changes "@object.num", from: -1 do
+        # ...
+      end
+    end
+  end
+
+  def test_assert_no_changes_with_from_option_with_nil
+    error = assert_raises Minitest::Assertion do
+      assert_no_changes "@object.num", from: nil do
+        @object.increment
+      end
+    end
+    assert_equal "Expected initial value of nil", error.message
+  end
+
+  def test_assert_no_changes_with_from_and_case_operator
+    token = SecureRandom.hex
+
+    assert_no_changes -> { token }, from: /\w{32}/ do
       # ...
     end
   end
@@ -319,15 +375,94 @@ class AssertionsTest < ActiveSupport::TestCase
   end
 end
 
+class ExceptionsInsideAssertionsTest < ActiveSupport::TestCase
+  def before_setup
+    require "stringio"
+    @out = StringIO.new
+    self.tagged_logger = ActiveSupport::TaggedLogging.new(Logger.new(@out))
+    super
+  end
+
+  def test_warning_is_logged_if_caught_internally
+    run_test_that_should_pass_and_log_a_warning
+    expected = <<~MSG
+      ExceptionsInsideAssertionsTest - test_warning_is_logged_if_caught_internally: ArgumentError raised.
+      If you expected this exception, use `assert_raises` as near to the code that raises as possible.
+      Other block based assertions (e.g. `assert_no_changes`) can be used, as long as `assert_raises` is inside their block.
+    MSG
+    assert_includes @out.string, expected
+  end
+
+  def test_warning_is_not_logged_if_caught_correctly_by_user
+    run_test_that_should_pass_and_not_log_a_warning
+    assert_not @out.string.include?("assert_nothing_raised")
+  end
+
+  def test_warning_is_not_logged_if_assertions_are_nested_correctly
+    error = assert_raises(Minitest::Assertion) do
+      run_test_that_should_fail_but_not_log_a_warning
+    end
+    assert_not @out.string.include?("assert_nothing_raised")
+    assert error.message.include?("(lambda)> changed")
+  end
+
+  def test_fails_and_warning_is_logged_if_wrong_error_caught
+    error = assert_raises(Minitest::Assertion) do
+      run_test_that_should_fail_confusingly
+    end
+    expected = <<~MSG
+      ExceptionsInsideAssertionsTest - test_fails_and_warning_is_logged_if_wrong_error_caught: ArgumentError raised.
+      If you expected this exception, use `assert_raises` as near to the code that raises as possible.
+      Other block based assertions (e.g. `assert_no_changes`) can be used, as long as `assert_raises` is inside their block.
+    MSG
+    assert_includes @out.string, expected
+    assert error.message.include?("ArgumentError: ArgumentError")
+    assert error.message.include?("in `block (2 levels) in run_test_that_should_fail_confusingly'")
+  end
+
+  private
+    def run_test_that_should_pass_and_log_a_warning
+      assert_raises(Minitest::UnexpectedError) do # this assertion passes, but it's unlikely to be how anyone writes a test
+        assert_no_changes -> { 1 } do # this assertion doesn't run. the error below is caught and the warning logged.
+          raise ArgumentError.new
+        end
+      end
+    end
+
+    def run_test_that_should_fail_confusingly
+      assert_raises(ArgumentError) do # this assertion fails (confusingly) because it catches a Minitest::UnexpectedError.
+        assert_no_changes -> { 1 } do # this assertion doesn't run. the error below is caught and the warning logged.
+          raise ArgumentError.new
+        end
+      end
+    end
+
+    def run_test_that_should_pass_and_not_log_a_warning
+      assert_no_changes -> { 1 } do # this assertion passes
+        assert_raises(ArgumentError) do # this assertion passes
+          raise ArgumentError.new
+        end
+      end
+    end
+
+    def run_test_that_should_fail_but_not_log_a_warning
+      assert_no_changes -> { rand } do # this assertion fails
+        assert_raises(ArgumentError) do # this assertion passes
+          raise ArgumentError.new
+        end
+      end
+    end
+end
+
 # Setup and teardown callbacks.
 class SetupAndTeardownTest < ActiveSupport::TestCase
   setup :reset_callback_record, :foo
   teardown :foo, :sentinel
 
   def test_inherited_setup_callbacks
-    assert_equal [:reset_callback_record, :foo], self.class._setup_callbacks.map(&:raw_filter)
+    assert_equal [:reset_callback_record, :foo], self.class._setup_callbacks.map(&:filter)
     assert_equal [:foo], @called_back
-    assert_equal [:foo, :sentinel], self.class._teardown_callbacks.map(&:raw_filter)
+    assert_equal [:foo, :sentinel], self.class._teardown_callbacks.map(&:filter)
   end
 
   def setup
@@ -355,9 +490,9 @@ class SubclassSetupAndTeardownTest < SetupAndTeardownTest
   teardown :bar
 
   def test_inherited_setup_callbacks
-    assert_equal [:reset_callback_record, :foo, :bar], self.class._setup_callbacks.map(&:raw_filter)
+    assert_equal [:reset_callback_record, :foo, :bar], self.class._setup_callbacks.map(&:filter)
     assert_equal [:foo, :bar], @called_back
-    assert_equal [:foo, :sentinel, :bar], self.class._teardown_callbacks.map(&:raw_filter)
+    assert_equal [:foo, :sentinel, :bar], self.class._teardown_callbacks.map(&:filter)
   end
 
   private
@@ -414,5 +549,31 @@ class TestOrderTest < ActiveSupport::TestCase
     assert_equal :random, ActiveSupport::TestCase.test_order
     assert_equal :random, self.class.test_order
     assert_equal :random, Class.new(ActiveSupport::TestCase).test_order
+  end
+end
+
+
+class ConstStubbable
+  CONSTANT = 1
+end
+
+class TestConstStubbing < ActiveSupport::TestCase
+  test "stubbing a constant temporarily replaces it with a new value" do
+    stub_const(ConstStubbable, :CONSTANT, 2) do
+      assert_equal 2, ConstStubbable::CONSTANT
+    end
+
+    assert_equal 1, ConstStubbable::CONSTANT
+  end
+
+  test "stubbed constant still reset even if exception is raised" do
+    assert_raises(RuntimeError) do
+      stub_const(ConstStubbable, :CONSTANT, 2) do
+        assert_equal 2, ConstStubbable::CONSTANT
+        raise "Exception"
+      end
+    end
+
+    assert_equal 1, ConstStubbable::CONSTANT
   end
 end

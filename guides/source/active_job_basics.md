@@ -15,7 +15,6 @@ After reading this guide, you will know:
 
 --------------------------------------------------------------------------------
 
-
 What is Active Job?
 -------------------
 
@@ -27,6 +26,7 @@ into small units of work and run in parallel, really.
 
 The Purpose of Active Job
 -----------------------------
+
 The main point is to ensure that all Rails apps will have a job infrastructure
 in place. We can then have framework features and other gems build on top of that,
 without having to worry about API differences between various job runners such as
@@ -79,6 +79,23 @@ end
 
 Note that you can define `perform` with as many arguments as you want.
 
+If you already have an abstract class and its name differs from `ApplicationJob`, you can pass
+the `--parent` option to indicate you want a different abstract class:
+
+```bash
+$ bin/rails generate job process_payment --parent=payment_job
+```
+
+```ruby
+class ProcessPaymentJob < PaymentJob
+  queue_as :default
+
+  def perform(*args)
+    # Do something later
+  end
+end
+```
+
 ### Enqueue the Job
 
 Enqueue a job using [`perform_later`][] and, optionally, [`set`][]. Like so:
@@ -114,7 +131,7 @@ Job Execution
 -------------
 
 For enqueuing and executing jobs in production you need to set up a queuing backend,
-that is to say you need to decide on a 3rd-party queuing library that Rails should use.
+that is to say, you need to decide on a 3rd-party queuing library that Rails should use.
 Rails itself only provides an in-process queuing system, which only keeps the jobs in RAM.
 If the process crashes or the machine is reset, then all outstanding jobs are lost with the
 default async backend. This may be fine for smaller apps or non-critical jobs, but most
@@ -130,7 +147,7 @@ see the API Documentation for [`ActiveJob::QueueAdapters`][].
 
 ### Setting the Backend
 
-You can easily set your queuing backend:
+You can easily set your queuing backend with [`config.active_job.queue_adapter`]:
 
 ```ruby
 # config/application.rb
@@ -144,17 +161,19 @@ module YourApp
 end
 ```
 
-You can also configure your backend on a per job basis.
+You can also configure your backend on a per job basis:
 
 ```ruby
 class GuestsCleanupJob < ApplicationJob
   self.queue_adapter = :resque
-  #....
+  # ...
 end
 
-# Now your job will use `resque` as its backend queue adapter overriding what
+# Now your job will use `resque` as its backend queue adapter, overriding what
 # was configured in `config.active_job.queue_adapter`.
 ```
+
+[`config.active_job.queue_adapter`]: configuring.html#config-active-job-queue-adapter
 
 ### Starting the Backend
 
@@ -172,6 +191,7 @@ Here is a noncomprehensive list of documentation:
 - [Queue Classic](https://github.com/QueueClassic/queue_classic#active-job)
 - [Delayed Job](https://github.com/collectiveidea/delayed_job#active-job)
 - [Que](https://github.com/que-rb/que#additional-rails-specific-setup)
+- [Good Job](https://github.com/bensheldon/good_job#readme)
 
 Queues
 ------
@@ -182,12 +202,12 @@ the job to run on a specific queue using [`queue_as`][]:
 ```ruby
 class GuestsCleanupJob < ApplicationJob
   queue_as :low_priority
-  #....
+  # ...
 end
 ```
 
 You can prefix the queue name for all your jobs using
-`config.active_job.queue_name_prefix` in `application.rb`:
+[`config.active_job.queue_name_prefix`][] in `application.rb`:
 
 ```ruby
 # config/application.rb
@@ -196,11 +216,13 @@ module YourApp
     config.active_job.queue_name_prefix = Rails.env
   end
 end
+```
 
+```ruby
 # app/jobs/guests_cleanup_job.rb
 class GuestsCleanupJob < ApplicationJob
   queue_as :low_priority
-  #....
+  # ...
 end
 
 # Now your job will run on queue production_low_priority on your
@@ -214,7 +236,7 @@ You can also configure the prefix on a per job basis.
 class GuestsCleanupJob < ApplicationJob
   queue_as :low_priority
   self.queue_name_prefix = nil
-  #....
+  # ...
 end
 
 # Now your job's queue won't be prefixed, overriding what
@@ -222,7 +244,7 @@ end
 ```
 
 The default queue name prefix delimiter is '\_'.  This can be changed by setting
-`config.active_job.queue_name_delimiter` in `application.rb`:
+[`config.active_job.queue_name_delimiter`][] in `application.rb`:
 
 ```ruby
 # config/application.rb
@@ -232,11 +254,13 @@ module YourApp
     config.active_job.queue_name_delimiter = '.'
   end
 end
+```
 
+```ruby
 # app/jobs/guests_cleanup_job.rb
 class GuestsCleanupJob < ApplicationJob
   queue_as :low_priority
-  #....
+  # ...
 end
 
 # Now your job will run on queue production.low_priority on your
@@ -245,15 +269,15 @@ end
 ```
 
 If you want more control on what queue a job will be run you can pass a `:queue`
-option to `#set`:
+option to `set`:
 
 ```ruby
 MyJob.set(queue: :another_queue).perform_later(record)
 ```
 
-To control the queue from the job level you can pass a block to `#queue_as`. The
-block will be executed in the job context (so you can access `self.arguments`)
-and you must return the queue name:
+To control the queue from the job level you can pass a block to `queue_as`. The
+block will be executed in the job context (so it can access `self.arguments`),
+and it must return the queue name:
 
 ```ruby
 class ProcessVideoJob < ApplicationJob
@@ -270,13 +294,17 @@ class ProcessVideoJob < ApplicationJob
     # Do process video
   end
 end
+```
 
+```ruby
 ProcessVideoJob.perform_later(Video.last)
 ```
 
 NOTE: Make sure your queuing backend "listens" on your queue name. For some
 backends you need to specify the queues to listen to.
 
+[`config.active_job.queue_name_delimiter`]: configuring.html#config-active-job-queue-name-delimiter
+[`config.active_job.queue_name_prefix`]: configuring.html#config-active-job-queue-name-prefix
 [`queue_as`]: https://api.rubyonrails.org/classes/ActiveJob/QueueName/ClassMethods.html#method-i-queue_as
 
 Callbacks
@@ -315,7 +343,7 @@ class ApplicationJob < ActiveJob::Base
 end
 ```
 
-### Available callbacks
+### Available Callbacks
 
 * [`before_enqueue`][]
 * [`around_enqueue`][]
@@ -356,7 +384,7 @@ of the `.deliver_later` emails are processed. To avoid this problem, use
 Internationalization
 --------------------
 
-Each job uses the `I18n.locale` set when the job was created. Useful if you send
+Each job uses the `I18n.locale` set when the job was created. This is useful if you send
 emails asynchronously:
 
 ```ruby
@@ -366,7 +394,7 @@ UserMailer.welcome(@user).deliver_later # Email will be localized to Esperanto.
 ```
 
 
-Supported types for arguments
+Supported Types for Arguments
 ----------------------------
 
 ActiveJob supports the following types of arguments by default:
@@ -381,12 +409,13 @@ ActiveJob supports the following types of arguments by default:
   - `Hash` (Keys should be of `String` or `Symbol` type)
   - `ActiveSupport::HashWithIndifferentAccess`
   - `Array`
+  - `Range`
   - `Module`
   - `Class`
 
 ### GlobalID
 
-Active Job supports GlobalID for parameters. This makes it possible to pass live
+Active Job supports [GlobalID](https://github.com/rails/globalid/blob/master/README.md) for parameters. This makes it possible to pass live
 Active Record objects to your job instead of class/id pairs, which you then have
 to manually deserialize. Before, jobs would look like this:
 
@@ -417,6 +446,7 @@ by default has been mixed into Active Record classes.
 You can extend the list of supported argument types. You just need to define your own serializer:
 
 ```ruby
+# app/serializers/money_serializer.rb
 class MoneySerializer < ActiveJob::Serializers::ObjectSerializer
   # Checks if an argument should be serialized by this serializer.
   def serialize?(argument)
@@ -443,7 +473,20 @@ end
 and add this serializer to the list:
 
 ```ruby
+# config/initializers/custom_serializers.rb
 Rails.application.config.active_job.custom_serializers << MoneySerializer
+```
+
+Note that autoloading reloadable code during initialization is not supported. Thus it is recommended
+to set-up serializers to be loaded only once, e.g. by amending `config/application.rb` like this:
+
+```ruby
+# config/application.rb
+module YourApp
+  class Application < Rails::Application
+    config.autoload_once_paths << Rails.root.join('app', 'serializers')
+  end
+end
 ```
 
 Exceptions
@@ -466,11 +509,11 @@ class GuestsCleanupJob < ApplicationJob
 end
 ```
 
-If the exception is not rescued within the job, e.g. as shown above, then the job is referred to as "failed".
+If an exception from a job is not rescued, then the job is referred to as "failed".
 
 [`rescue_from`]: https://api.rubyonrails.org/classes/ActiveSupport/Rescuable/ClassMethods.html#method-i-rescue_from
 
-### Retrying or Discarding failed jobs
+### Retrying or Discarding Failed Jobs
 
 A failed job will not be retried, unless configured otherwise.
 

@@ -2,7 +2,9 @@
 
 require "abstract_controller"
 require "action_dispatch"
+require "action_controller/deprecator"
 require "action_controller/metal/strong_parameters"
+require "action_controller/metal/exceptions"
 
 module ActionController
   extend ActiveSupport::Autoload
@@ -18,10 +20,6 @@ module ActionController
   end
 
   autoload_under "metal" do
-    eager_autoload do
-      autoload :Live
-    end
-
     autoload :ConditionalGet
     autoload :ContentSecurityPolicy
     autoload :Cookies
@@ -37,6 +35,7 @@ module ActionController
     autoload :BasicImplicitRender
     autoload :ImplicitRender
     autoload :Instrumentation
+    autoload :Live
     autoload :Logging
     autoload :MimeResponds
     autoload :ParamsWrapper
@@ -65,5 +64,4 @@ require "active_support/core_ext/module/attribute_accessors"
 require "active_support/core_ext/load_error"
 require "active_support/core_ext/module/attr_internal"
 require "active_support/core_ext/name_error"
-require "active_support/core_ext/uri"
 require "active_support/inflector"

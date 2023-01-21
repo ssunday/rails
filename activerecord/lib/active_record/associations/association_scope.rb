@@ -2,7 +2,7 @@
 
 module ActiveRecord
   module Associations
-    class AssociationScope #:nodoc:
+    class AssociationScope # :nodoc:
       def self.scope(association)
         INSTANCE.scope(association)
       end
@@ -123,19 +123,19 @@ module ActiveRecord
 
           chain_head = chain.first
           chain.reverse_each do |reflection|
-            # Exclude the scope of the association itself, because that
-            # was already merged in the #scope method.
             reflection.constraints.each do |scope_chain_item|
               item = eval_scope(reflection, scope_chain_item, owner)
 
               if scope_chain_item == chain_head.scope
                 scope.merge! item.except(:where, :includes, :unscope, :order)
               elsif !item.references_values.empty?
-                join_dependency = item.construct_join_dependency(
-                  item.eager_load_values | item.includes_values, Arel::Nodes::OuterJoin
-                )
-                scope.joins!(*item.joins_values, join_dependency)
-                scope.left_outer_joins!(*item.left_outer_joins_values)
+                scope.merge! item.only(:joins, :left_outer_joins)
+
+                associations = item.eager_load_values | item.includes_values
+
+                unless associations.empty?
+                  scope.joins! item.construct_join_dependency(associations, Arel::Nodes::OuterJoin)
+                end
               end
 
               reflection.all_includes do

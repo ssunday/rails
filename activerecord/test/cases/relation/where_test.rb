@@ -336,6 +336,11 @@ module ActiveRecord
       assert_equal 0, count
     end
 
+    def test_where_with_rational_for_string_column
+      count = Post.where(title: Rational(0)).count
+      assert_equal 0, count
+    end
+
     def test_where_with_duration_for_string_column
       count = Post.where(title: 0.seconds).count
       assert_equal 0, count
@@ -424,6 +429,19 @@ module ActiveRecord
 
     def test_where_with_unsupported_arguments
       assert_raises(ArgumentError) { Author.where(42) }
+    end
+
+    def test_invert_where
+      author = authors(:david)
+      posts = author.posts.where.not(id: 1)
+
+      assert_equal 1, posts.invert_where.first.id
+    end
+
+    def test_nested_conditional_on_enum
+      post = Post.first
+      Comment.create!(label: :default, post: post, body: "Nice weather today")
+      assert_equal [post], Post.joins(:comments).where(comments: { label: :default, body: "Nice weather today" }).to_a
     end
   end
 end

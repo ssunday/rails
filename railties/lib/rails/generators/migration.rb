@@ -12,7 +12,7 @@ module Rails
       extend ActiveSupport::Concern
       attr_reader :migration_number, :migration_file_name, :migration_class_name
 
-      module ClassMethods #:nodoc:
+      module ClassMethods # :nodoc:
         def migration_lookup_at(dirname)
           Dir.glob("#{dirname}/[0-9]*_*.rb")
         end
@@ -57,17 +57,12 @@ module Rails
         source = File.expand_path(find_in_source_paths(source.to_s))
 
         set_migration_assigns!(destination)
-        context = instance_eval("binding")
 
         dir, base = File.split(destination)
         numbered_destination = File.join(dir, ["%migration_number%", base].join("_"))
 
         file = create_migration numbered_destination, nil, config do
-          if ERB.instance_method(:initialize).parameters.assoc(:key) # Ruby 2.6+
-            ERB.new(::File.binread(source), trim_mode: "-", eoutvar: "@output_buffer").result(context)
-          else
-            ERB.new(::File.binread(source), nil, "-", "@output_buffer").result(context)
-          end
+          ERB.new(::File.binread(source), trim_mode: "-", eoutvar: "@output_buffer").result(binding)
         end
         Rails::Generators.add_generated_file(file)
       end

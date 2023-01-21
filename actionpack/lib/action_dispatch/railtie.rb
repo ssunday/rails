@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "action_dispatch"
+require "action_dispatch/log_subscriber"
 require "active_support/messages/rotation_configuration"
 
 module ActionDispatch
@@ -24,6 +25,8 @@ module ActionDispatch
     config.action_dispatch.use_cookies_with_metadata = false
     config.action_dispatch.perform_deep_munge = true
     config.action_dispatch.request_id_header = "X-Request-Id"
+    config.action_dispatch.return_only_request_media_type_on_content_type = true
+    config.action_dispatch.log_rescued_responses = true
 
     config.action_dispatch.default_headers = {
       "X-Frame-Options" => "SAMEORIGIN",
@@ -38,11 +41,19 @@ module ActionDispatch
 
     config.eager_load_namespaces << ActionDispatch
 
+    initializer "action_dispatch.deprecator", before: :load_environment_config do |app|
+      app.deprecators[:action_dispatch] = ActionDispatch.deprecator
+    end
+
     initializer "action_dispatch.configure" do |app|
       ActionDispatch::Http::URL.secure_protocol = app.config.force_ssl
       ActionDispatch::Http::URL.tld_length = app.config.action_dispatch.tld_length
-      ActionDispatch::Request.ignore_accept_header = app.config.action_dispatch.ignore_accept_header
-      ActionDispatch::Request::Utils.perform_deep_munge = app.config.action_dispatch.perform_deep_munge
+
+      ActiveSupport.on_load(:action_dispatch_request) do
+        self.ignore_accept_header = app.config.action_dispatch.ignore_accept_header
+        self.return_only_media_type_on_content_type = app.config.action_dispatch.return_only_request_media_type_on_content_type
+        ActionDispatch::Request::Utils.perform_deep_munge = app.config.action_dispatch.perform_deep_munge
+      end
 
       ActiveSupport.on_load(:action_dispatch_response) do
         self.default_charset = app.config.action_dispatch.default_charset || app.config.encoding

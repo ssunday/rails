@@ -104,6 +104,32 @@ module ActiveRecord
       take || raise_record_not_found_exception!
     end
 
+    # Finds the sole matching record. Raises ActiveRecord::RecordNotFound if no
+    # record is found. Raises ActiveRecord::SoleRecordExceeded if more than one
+    # record is found.
+    #
+    #   Product.where(["price = %?", price]).sole
+    def sole
+      found, undesired = first(2)
+
+      if found.nil?
+        raise_record_not_found_exception!
+      elsif undesired.present?
+        raise ActiveRecord::SoleRecordExceeded.new(self)
+      else
+        found
+      end
+    end
+
+    # Finds the sole matching record. Raises ActiveRecord::RecordNotFound if no
+    # record is found. Raises ActiveRecord::SoleRecordExceeded if more than one
+    # record is found.
+    #
+    #   Product.find_sole_by(["price = %?", price])
+    def find_sole_by(arg, *args)
+      where(arg, *args).sole
+    end
+
     # Find the first record (or first N records if a parameter is supplied).
     # If no order is defined it will order by primary key.
     #
@@ -114,8 +140,6 @@ module ActiveRecord
     #   Person.first(3) # returns the first three objects fetched by SELECT * FROM people ORDER BY people.id LIMIT 3
     #
     def first(limit = nil)
-      check_reorder_deprecation unless loaded?
-
       if limit
         find_nth_with_limit(0, limit)
       else
@@ -326,7 +350,7 @@ module ActiveRecord
     # compared to the records in memory. If the relation is unloaded, an
     # efficient existence query is performed, as in #exists?.
     def include?(record)
-      if loaded? || offset_value || limit_value
+      if loaded? || offset_value || limit_value || having_clause.any?
         records.include?(record)
       else
         record.is_a?(klass) && exists?(record.id)
@@ -364,17 +388,6 @@ module ActiveRecord
     end
 
     private
-      def check_reorder_deprecation
-        if !order_values.empty? && order_values.all?(&:blank?)
-          blank_value = order_values.first
-          ActiveSupport::Deprecation.warn(<<~MSG.squish)
-            `.reorder(#{blank_value.inspect})` with `.first` / `.first!` no longer
-            takes non-deterministic result in Rails 6.2.
-            To continue taking non-deterministic result, use `.take` / `.take!` instead.
-          MSG
-        end
-      end
-
       def construct_relation_for_exists(conditions)
         conditions = sanitize_forbidden_attributes(conditions)
 
@@ -400,7 +413,7 @@ module ActiveRecord
         )
         relation = except(:includes, :eager_load, :preload).joins!(join_dependency)
 
-        if eager_loading && !(
+        if eager_loading && has_limit_or_offset? && !(
             using_limitable_reflections?(join_dependency.reflections) &&
             using_limitable_reflections?(
               construct_join_dependency(
@@ -409,12 +422,10 @@ module ActiveRecord
                 ), nil
               ).reflections
             )
-        )
-          if has_limit_or_offset?
-            limited_ids = limited_ids_for(relation)
-            limited_ids.empty? ? relation.none! : relation.where!(primary_key => limited_ids)
+          )
+          relation = skip_query_cache_if_necessary do
+            klass.connection.distinct_relation_for_primary_key(relation)
           end
-          relation.limit_value = relation.offset_value = nil
         end
 
         if block_given?
@@ -422,18 +433,6 @@ module ActiveRecord
         else
           relation
         end
-      end
-
-      def limited_ids_for(relation)
-        values = @klass.connection.columns_for_distinct(
-          connection.visitor.compile(table[primary_key]),
-          relation.order_values
-        )
-
-        relation = relation.except(:select).select(values).distinct!
-
-        id_rows = skip_query_cache_if_necessary { @klass.connection.select_rows(relation.arel, "SQL") }
-        id_rows.map(&:last)
       end
 
       def using_limitable_reflections?(reflections)
@@ -481,7 +480,9 @@ module ActiveRecord
       def find_some(ids)
         return find_some_ordered(ids) unless order_values.present?
 
-        result = where(primary_key => ids).to_a
+        relation = where(primary_key => ids)
+        relation = relation.select(table[primary_key]) unless select_values.empty?
+        result = relation.to_a
 
         expected_size =
           if limit_value && ids.size > limit_value
@@ -505,13 +506,12 @@ module ActiveRecord
       def find_some_ordered(ids)
         ids = ids.slice(offset_value || 0, limit_value || ids.size) || []
 
-        result = except(:limit, :offset).where(primary_key => ids).records
+        relation = except(:limit, :offset).where(primary_key => ids)
+        relation = relation.select(table[primary_key]) unless select_values.empty?
+        result = relation.records
 
         if result.size == ids.size
-          pk_type = @klass.type_for_attribute(primary_key)
-
-          records_by_id = result.index_by(&:id)
-          ids.map { |id| records_by_id.fetch(pk_type.cast(id)) }
+          result.in_order_of(:id, ids.map { |id| @klass.type_for_attribute(primary_key).cast(id) })
         else
           raise_record_not_found_exception!(ids, result.size, ids.size)
         end
@@ -563,10 +563,10 @@ module ActiveRecord
         else
           relation = ordered_relation
 
-          if equal?(relation) || has_limit_or_offset?
+          if relation.order_values.empty? || relation.has_limit_or_offset?
             relation.records[-index]
           else
-            relation.last(index)[-index]
+            relation.reverse_order.offset(index - 1).first
           end
         end
       end
@@ -576,12 +576,12 @@ module ActiveRecord
       end
 
       def ordered_relation
-        if order_values.empty? && (implicit_order_column || primary_key)
-          if implicit_order_column && primary_key && implicit_order_column != primary_key
-            order(table[implicit_order_column].asc, table[primary_key].asc)
-          else
-            order(table[implicit_order_column || primary_key].asc)
-          end
+        if order_values.empty? && (implicit_order_column || !query_constraints_list.empty?)
+          # use query_constraints_list as the order clause if there is no implicit_order_column
+          # otherwise remove the implicit order column from the query constraints list if it's there
+          # and prepend it to the beginning of the list
+          order_columns = implicit_order_column.nil? ? query_constraints_list : ([implicit_order_column] | query_constraints_list)
+          order(*order_columns.map { |column| table[column].asc })
         else
           self
         end

@@ -26,6 +26,7 @@ require "models/department"
 require "models/cake_designer"
 require "models/drink_designer"
 require "models/recipe"
+require "models/user_with_invalid_relation"
 
 class ReflectionTest < ActiveRecord::TestCase
   include ActiveRecord::Reflection
@@ -137,6 +138,46 @@ class ReflectionTest < ActiveRecord::TestCase
     assert_equal "PluralIrregular", reflection.class_name
   end
 
+  def test_reflection_klass_not_found_with_no_class_name_option
+    error = assert_raise(NameError) do
+      UserWithInvalidRelation.reflect_on_association(:not_a_class).klass
+    end
+
+    assert_equal "NotAClass", error.name
+    assert_match %r/missing/i, error.message
+    assert_match "NotAClass", error.message
+    assert_match "UserWithInvalidRelation#not_a_class", error.message
+    assert_match ":class_name", error.message
+  end
+
+  def test_reflection_klass_not_found_with_pointer_to_non_existent_class_name
+    error = assert_raise(NameError) do
+      UserWithInvalidRelation.reflect_on_association(:class_name_provided_not_a_class).klass
+    end
+
+    assert_equal "NotAClass", error.name
+    assert_match %r/missing/i, error.message
+    assert_match %r/\bNotAClass\b/, error.message
+    assert_match "UserWithInvalidRelation#class_name_provided_not_a_class", error.message
+    assert_no_match ":class_name", error.message
+  end
+
+  def test_reflection_klass_requires_ar_subclass
+    [ :account_invalid,          # has_one, without :class_name
+      :account_class_name,       # has_one, with :class_name
+      :info_invalids,            # has_many through, without :class_name
+      :infos_class_name,         # has_many through, with :class_name
+      :infos_through_class_name, # has_many through other :class_name, with :class_name
+    ].each do |rel|
+      error = assert_raise(ArgumentError) do
+        UserWithInvalidRelation.reflect_on_association(rel).klass
+      end
+
+      assert_match "not an ActiveRecord::Base subclass", error.message
+      assert_match "UserWithInvalidRelation##{rel}", error.message
+    end
+  end
+
   def test_aggregation_reflection
     reflection_for_address = AggregateReflection.new(
       :address, nil, { mapping: [ %w(address_street street), %w(address_city city), %w(address_country country) ] }, Customer
@@ -246,7 +287,7 @@ class ReflectionTest < ActiveRecord::TestCase
   end
 
   def test_reflections_should_return_keys_as_strings
-    assert Category.reflections.keys.all? { |key| key.is_a? String }, "Model.reflections is expected to return string for keys"
+    assert Category.reflections.keys.all?(String), "Model.reflections is expected to return string for keys"
   end
 
   def test_has_and_belongs_to_many_reflection
@@ -407,6 +448,10 @@ class ReflectionTest < ActiveRecord::TestCase
     assert_equal "category_id", Post.reflect_on_association(:categorizations).foreign_key.to_s
   end
 
+  def test_foreign_key_is_inferred_from_model_name
+    assert_equal "post_id", PostRecord.reflect_on_association(:comments).foreign_key.to_s
+  end
+
   def test_symbol_for_class_name
     assert_equal Client, Firm.reflect_on_association(:unsorted_clients_with_symbol).klass
   end
@@ -416,6 +461,13 @@ class ReflectionTest < ActiveRecord::TestCase
       ActiveRecord::Reflection.create(:has_many, :clients, nil, { class_name: Client }, Firm)
     end
     assert_equal "A class was passed to `:class_name` but we are expecting a string.", error.message
+  end
+
+  def test_class_for_source_type
+    error = assert_raises(ArgumentError) do
+      ActiveRecord::Reflection.create(:has_many, :tagged_posts, nil, { through: :taggings, source: :taggable, source_type: Post }, Tag)
+    end
+    assert_equal "A class was passed to `:source_type` but we are expecting a string.", error.message
   end
 
   def test_join_table
@@ -507,6 +559,41 @@ class ReflectionTest < ActiveRecord::TestCase
   def test_reflect_on_association_accepts_strings
     assert_nothing_raised do
       assert_equal Hotel.reflect_on_association("departments").name, :departments
+    end
+  end
+
+  def test_name_error_from_incidental_code_is_not_converted_to_name_error_for_association
+    UserWithInvalidRelation.stub(:const_missing, proc { oops }) do
+      reflection = UserWithInvalidRelation.reflect_on_association(:not_a_class)
+
+      error = assert_raises(NameError) do
+        reflection.klass
+      end
+
+      assert_equal :oops, error.name
+      assert_match "oops", error.message
+      assert_no_match "NotAClass", error.message
+      assert_no_match "not_a_class", error.message
+    end
+  end
+
+  def test_automatic_inverse_suppresses_name_error_for_association
+    reflection = UserWithInvalidRelation.reflect_on_association(:not_a_class)
+    assert_not reflection.dup.has_inverse? # dup to prevent global memoization
+  end
+
+  def test_automatic_inverse_does_not_suppress_name_error_from_incidental_code
+    UserWithInvalidRelation.stub(:const_missing, proc { oops }) do
+      reflection = UserWithInvalidRelation.reflect_on_association(:not_a_class)
+
+      error = assert_raises(NameError) do
+        reflection.dup.has_inverse? # dup to prevent global memoization
+      end
+
+      assert_equal :oops, error.name
+      assert_match "oops", error.message
+      assert_no_match "NotAClass", error.message
+      assert_no_match "not_a_class", error.message
     end
   end
 

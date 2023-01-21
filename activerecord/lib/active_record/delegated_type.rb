@@ -51,10 +51,9 @@ module ActiveRecord
   #     end
   #   end
   #
-  #   # Schema: messages[ id, subject ]
+  #   # Schema: messages[ id, subject, body ]
   #   class Message < ApplicationRecord
   #     include Entryable
-  #     has_rich_text :content
   #   end
   #
   #   # Schema: comments[ id, content ]
@@ -66,7 +65,7 @@ module ActiveRecord
   # resides in the +Entry+ "superclass". But the +Entry+ absolutely can stand alone in terms of querying capacity
   # in particular. You can now easily do things like:
   #
-  #   Account.entries.order(created_at: :desc).limit(50)
+  #   Account.find(1).entries.order(created_at: :desc).limit(50)
   #
   # Which is exactly what you want when displaying both comments and messages together. The entry itself can
   # be rendered as its delegated type easily, like so:
@@ -76,7 +75,9 @@ module ActiveRecord
   #
   #   # entries/entryables/_message.html.erb
   #   <div class="message">
-  #     Posted on <%= entry.created_at %> by <%= entry.creator.name %>: <%= entry.message.content %>
+  #     <div class="subject"><%= entry.message.subject %></div>
+  #     <p><%= entry.message.body %></p>
+  #     <i>Posted on <%= entry.created_at %> by <%= entry.creator.name %></i>
   #   </div>
   #
   #   # entries/entryables/_comment.html.erb
@@ -135,7 +136,22 @@ module ActiveRecord
   #     end
   #   end
   #
-  # Now you can list a bunch of entries, call +Entry#title+, and polymorphism will provide you with the answer.
+  # Now you can list a bunch of entries, call <tt>Entry#title</tt>, and polymorphism will provide you with the answer.
+  #
+  # == Nested Attributes
+  #
+  # Enabling nested attributes on a delegated_type association allows you to
+  # create the entry and message in one go:
+  #
+  #   class Entry < ApplicationRecord
+  #     delegated_type :entryable, types: %w[ Message Comment ]
+  #     accepts_nested_attributes_for :entryable
+  #   end
+  #
+  #   params = { entry: { entryable_type: 'Message', entryable_attributes: { subject: 'Smiling' } } }
+  #   entry = Entry.create(params[:entry])
+  #   entry.entryable.id # => 2
+  #   entry.entryable.subject # => 'Smiling'
   module DelegatedType
     # Defines this as a class that'll delegate its type for the passed +role+ to the class references in +types+.
     # That'll create a polymorphic +belongs_to+ relationship to that +role+, and it'll add all the delegated
@@ -156,8 +172,6 @@ module ActiveRecord
     #   Entry#comment         # => returns the comment record, when entryable_type == "Comment", otherwise nil
     #   Entry#comment_id      # => returns entryable_id, when entryable_type == "Comment", otherwise nil
     #
-    # The +options+ are passed directly to the +belongs_to+ call, so this is where you declare +dependent+ etc.
-    #
     # You can also declare namespaced types:
     #
     #   class Entry < ApplicationRecord
@@ -167,15 +181,38 @@ module ActiveRecord
     #   Entry.access_notice_messages
     #   entry.access_notice_message
     #   entry.access_notice_message?
+    #
+    # === Options
+    #
+    # The +options+ are passed directly to the +belongs_to+ call, so this is where you declare +dependent+ etc.
+    # The following options can be included to specialize the behavior of the delegated type convenience methods.
+    #
+    # [:foreign_key]
+    #   Specify the foreign key used for the convenience methods. By default this is guessed to be the passed
+    #   +role+ with an "_id" suffix. So a class that defines a
+    #   <tt>delegated_type :entryable, types: %w[ Message Comment ]</tt> association will use "entryable_id" as
+    #   the default <tt>:foreign_key</tt>.
+    # [:primary_key]
+    #   Specify the method that returns the primary key of associated object used for the convenience methods.
+    #   By default this is +id+.
+    #
+    # Option examples:
+    #   class Entry < ApplicationRecord
+    #     delegated_type :entryable, types: %w[ Message Comment ], primary_key: :uuid, foreign_key: :entryable_uuid
+    #   end
+    #
+    #   Entry#message_uuid      # => returns entryable_uuid, when entryable_type == "Message", otherwise nil
+    #   Entry#comment_uuid      # => returns entryable_uuid, when entryable_type == "Comment", otherwise nil
     def delegated_type(role, types:, **options)
       belongs_to role, options.delete(:scope), **options.merge(polymorphic: true)
-      define_delegated_type_methods role, types: types
+      define_delegated_type_methods role, types: types, options: options
     end
 
     private
-      def define_delegated_type_methods(role, types:)
+      def define_delegated_type_methods(role, types:, options:)
+        primary_key = options[:primary_key] || "id"
         role_type = "#{role}_type"
-        role_id   = "#{role}_id"
+        role_id   = options[:foreign_key] || "#{role}_id"
 
         define_method "#{role}_class" do
           public_send("#{role}_type").constantize
@@ -185,8 +222,12 @@ module ActiveRecord
           public_send("#{role}_class").model_name.singular.inquiry
         end
 
+        define_method "build_#{role}" do |*params|
+          public_send("#{role}=", public_send("#{role}_class").new(*params))
+        end
+
         types.each do |type|
-          scope_name = type.tableize.gsub("/", "_")
+          scope_name = type.tableize.tr("/", "_")
           singular   = scope_name.singularize
           query      = "#{singular}?"
 
@@ -200,7 +241,7 @@ module ActiveRecord
             public_send(role) if public_send(query)
           end
 
-          define_method "#{singular}_id" do
+          define_method "#{singular}_#{primary_key}" do
             public_send(role_id) if public_send(query)
           end
         end

@@ -3,6 +3,7 @@
 require "active_support/core_ext/hash/keys"
 require "active_support/core_ext/hash/reverse_merge"
 require "active_support/core_ext/hash/except"
+require "active_support/core_ext/hash/slice"
 
 module ActiveSupport
   # Implements a hash where keys <tt>:foo</tt> and <tt>"foo"</tt> are considered
@@ -115,7 +116,7 @@ module ActiveSupport
     # <tt>ActiveSupport::HashWithIndifferentAccess</tt> or a regular +Hash+.
     # In either case the merge respects the semantics of indifferent access.
     #
-    # If the argument is a regular hash with keys +:key+ and +"key"+ only one
+    # If the argument is a regular hash with keys +:key+ and <tt>"key"</tt> only one
     # of the values end up in the receiver, but which one is unspecified.
     #
     # When given a block, the value for duplicated keys will be determined
@@ -217,8 +218,12 @@ module ActiveSupport
     #   hash.default                   # => nil
     #   hash.default('foo')            # => 'foo'
     #   hash.default(:foo)             # => 'foo'
-    def default(*args)
-      super(*args.map { |arg| convert_key(arg) })
+    def default(key = (no_key = true))
+      if no_key
+        super()
+      else
+        super(convert_key(key))
+      end
     end
 
     # Returns an array of the values at the specified indices:
@@ -228,7 +233,8 @@ module ActiveSupport
     #   hash[:b] = 'y'
     #   hash.values_at('a', 'b') # => ["x", "y"]
     def values_at(*keys)
-      super(*keys.map { |key| convert_key(key) })
+      keys.map! { |key| convert_key(key) }
+      super
     end
 
     # Returns an array of the values at the specified indices, but also
@@ -241,7 +247,8 @@ module ActiveSupport
     #   hash.fetch_values('a', 'c') { |key| 'z' } # => ["x", "z"]
     #   hash.fetch_values('a', 'c') # => KeyError: key not found: "c"
     def fetch_values(*indices, &block)
-      super(*indices.map { |key| convert_key(key) }, &block)
+      indices.map! { |key| convert_key(key) }
+      super
     end
 
     # Returns a shallow copy of the hash.
@@ -295,8 +302,12 @@ module ActiveSupport
       super(convert_key(key))
     end
 
+    # Returns a hash with indifferent access that includes everything except given keys.
+    #   hash = { a: "x", b: "y", c: 10 }.with_indifferent_access
+    #   hash.except(:a, "b") # => {c: 10}.with_indifferent_access
+    #   hash                 # => { a: "x", b: "y", c: 10 }.with_indifferent_access
     def except(*keys)
-      slice(*self.keys - keys.map { |key| convert_key(key) })
+      dup.except!(*keys)
     end
     alias_method :without, :except
 
@@ -321,21 +332,31 @@ module ActiveSupport
       dup.tap { |hash| hash.reject!(*args, &block) }
     end
 
-    def transform_values(*args, &block)
+    def transform_values(&block)
       return to_enum(:transform_values) unless block_given?
-      dup.tap { |hash| hash.transform_values!(*args, &block) }
+      dup.tap { |hash| hash.transform_values!(&block) }
     end
 
-    def transform_keys(*args, &block)
-      return to_enum(:transform_keys) unless block_given?
-      dup.tap { |hash| hash.transform_keys!(*args, &block) }
+    NOT_GIVEN = Object.new # :nodoc:
+
+    def transform_keys(hash = NOT_GIVEN, &block)
+      return to_enum(:transform_keys) if NOT_GIVEN.equal?(hash) && !block_given?
+      dup.tap { |h| h.transform_keys!(hash, &block) }
     end
 
-    def transform_keys!
-      return enum_for(:transform_keys!) { size } unless block_given?
-      keys.each do |key|
-        self[yield(key)] = delete(key)
+    def transform_keys!(hash = NOT_GIVEN, &block)
+      return to_enum(:transform_keys!) if NOT_GIVEN.equal?(hash) && !block_given?
+
+      if hash.nil?
+        super
+      elsif NOT_GIVEN.equal?(hash)
+        keys.each { |key| self[yield(key)] = delete(key) }
+      elsif block_given?
+        keys.each { |key| self[hash[key] || yield(key)] = delete(key) }
+      else
+        keys.each { |key| self[hash[key] || key] = delete(key) }
       end
+
       self
     end
 

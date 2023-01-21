@@ -1,6 +1,8 @@
 class MessagesController < ActionController::Base
   before_action :set_message, only: [:show, :edit, :update, :destroy]
 
+  layout "application"
+
   # GET /messages
   def index
     @messages = Message.all
@@ -26,7 +28,7 @@ class MessagesController < ActionController::Base
     if @message.save
       redirect_to @message, notice: 'Message was successfully created.'
     else
-      render :new
+      render :new, status: :unprocessable_entity
     end
   end
 
@@ -35,7 +37,7 @@ class MessagesController < ActionController::Base
     if @message.update(message_params)
       redirect_to @message, notice: 'Message was successfully updated.'
     else
-      render :edit
+      render :edit, status: :unprocessable_entity
     end
   end
 

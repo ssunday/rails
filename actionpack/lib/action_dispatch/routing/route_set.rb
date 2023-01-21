@@ -6,7 +6,6 @@ require "active_support/core_ext/module/redefine_method"
 require "active_support/core_ext/module/remove_method"
 require "active_support/core_ext/array/extract_options"
 require "action_controller/metal/exceptions"
-require "action_dispatch/http/request"
 require "action_dispatch/routing/endpoint"
 
 module ActionDispatch
@@ -132,8 +131,8 @@ module ActionDispatch
         alias []    get
         alias clear clear!
 
-        def each
-          routes.each { |name, route| yield name, route }
+        def each(&block)
+          routes.each(&block)
           self
         end
 
@@ -197,7 +196,9 @@ module ActionDispatch
             def call(t, method_name, args, inner_options, url_strategy)
               if args.size == arg_size && !inner_options && optimize_routes_generation?(t)
                 options = t.url_options.merge @options
-                options[:path] = optimized_helper(args)
+                path = optimized_helper(args)
+                path << "/" if options[:trailing_slash] && !path.end_with?("/")
+                options[:path] = path
 
                 original_script_name = options.delete(:original_script_name)
                 script_name = t._routes.find_script_name(options)
@@ -374,6 +375,7 @@ module ActionDispatch
         @disable_clear_and_finalize = false
         @finalized                  = false
         @env_key                    = "ROUTES_#{object_id}_SCRIPT_NAME"
+        @default_env                = nil
 
         @set    = Journey::Routes.new
         @router = Journey::Router.new @set
@@ -403,6 +405,25 @@ module ActionDispatch
         request_class.new env
       end
       private :make_request
+
+      def default_env
+        if default_url_options != @default_env&.[]("action_dispatch.routes.default_url_options")
+          url_options = default_url_options.dup.freeze
+          uri = URI(ActionDispatch::Http::URL.full_url_for(host: "example.org", **url_options))
+
+          @default_env = {
+            "action_dispatch.routes" => self,
+            "action_dispatch.routes.default_url_options" => url_options,
+            "HTTPS" => uri.scheme == "https" ? "on" : "off",
+            "rack.url_scheme" => uri.scheme,
+            "HTTP_HOST" => uri.port == uri.default_port ? uri.host : "#{uri.host}:#{uri.port}",
+            "SCRIPT_NAME" => uri.path.chomp("/"),
+            "rack.input" => "",
+          }.freeze
+        end
+
+        @default_env
+      end
 
       def draw(&block)
         clear! unless @disable_clear_and_finalize
@@ -573,6 +594,20 @@ module ActionDispatch
           end
 
           private :_generate_paths_by_default
+
+          # If the module is included more than once (for example, in a subclass
+          # of an ancestor that includes the module), ensure that the `_routes`
+          # singleton and instance methods return the desired route set by
+          # including a new copy of the module (recursively if necessary). Note
+          # that this method is called for each inclusion, whereas the above
+          # `included` block is run only for the initial inclusion of each copy.
+          def self.included(base)
+            super
+            if !base._routes.equal?(@_proxy._routes)
+              @dup_for_reinclude ||= self.dup
+              base.include @dup_for_reinclude
+            end
+          end
         end
       end
 
@@ -595,16 +630,16 @@ module ActionDispatch
         named_routes[name] = route if name
 
         if route.segment_keys.include?(:controller)
-          ActiveSupport::Deprecation.warn(<<-MSG.squish)
+          ActionDispatch.deprecator.warn(<<-MSG.squish)
             Using a dynamic :controller segment in a route is deprecated and
-            will be removed in Rails 6.2.
+            will be removed in Rails 7.1.
           MSG
         end
 
         if route.segment_keys.include?(:action)
-          ActiveSupport::Deprecation.warn(<<-MSG.squish)
+          ActionDispatch.deprecator.warn(<<-MSG.squish)
             Using a dynamic :action segment in a route is deprecated and
-            will be removed in Rails 6.2.
+            will be removed in Rails 7.1.
           MSG
         end
 
@@ -778,18 +813,14 @@ module ActionDispatch
 
       RESERVED_OPTIONS = [:host, :protocol, :port, :subdomain, :domain, :tld_length,
                           :trailing_slash, :anchor, :params, :only_path, :script_name,
-                          :original_script_name, :relative_url_root]
+                          :original_script_name]
 
       def optimize_routes_generation?
         default_url_options.empty?
       end
 
       def find_script_name(options)
-        options.delete(:script_name) || find_relative_url_root(options) || ""
-      end
-
-      def find_relative_url_root(options)
-        options.delete(:relative_url_root) || relative_url_root
+        options.delete(:script_name) || relative_url_root || ""
       end
 
       def path_for(options, route_name = nil, reserved = RESERVED_OPTIONS)
@@ -821,10 +852,19 @@ module ActionDispatch
 
         route_with_params = generate(route_name, path_options, recall)
         path = route_with_params.path(method_name)
+
+        if options[:trailing_slash] && !options[:format] && !path.end_with?("/")
+          path += "/"
+        end
+
         params = route_with_params.params
 
         if options.key? :params
-          params.merge! options[:params]
+          if options[:params]&.respond_to?(:to_hash)
+            params.merge! options[:params]
+          else
+            params[:params] = options[:params]
+          end
         end
 
         options[:path]        = path

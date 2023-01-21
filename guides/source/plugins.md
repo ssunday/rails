@@ -32,8 +32,7 @@ Setup
 Currently, Rails plugins are built as gems, _gemified plugins_. They can be shared across
 different Rails applications using RubyGems and Bundler if desired.
 
-### Generate a gemified plugin.
-
+### Generate a Gemified Plugin
 
 Rails ships with a `rails plugin new` command which creates a
 skeleton for developing any kind of Rails extension with the ability
@@ -53,16 +52,29 @@ $ rails plugin new --help
 Testing Your Newly Generated Plugin
 -----------------------------------
 
-You can navigate to the directory that contains the plugin, run the `bundle install` command
- and run the one generated test using the `bin/test` command.
+Navigate to the directory that contains the plugin, and edit `yaffle.gemspec` to
+replace any lines that have `TODO` values:
 
-You should see:
+```ruby
+  spec.homepage    = "http://example.com"
+  spec.summary     = "Summary of Yaffle."
+  spec.description = "Description of Yaffle."
+
+...
+
+  spec.metadata["source_code_uri"] = "http://example.com"
+  spec.metadata["changelog_uri"] = "http://example.com"
+```
+
+Then run the `bundle install` command.
+
+Now you can run the tests using the `bin/test` command, and you should see:
 
 ```
   1 runs, 1 assertions, 0 failures, 0 errors, 0 skips
 ```
 
-This will tell you that everything got generated properly and you are ready to start adding functionality.
+This will tell you that everything got generated properly, and you are ready to start adding functionality.
 
 Extending Core Classes
 ----------------------
@@ -109,6 +121,7 @@ In `lib/yaffle.rb`, add `require "yaffle/core_ext"`:
 ```ruby
 # yaffle/lib/yaffle.rb
 
+require "yaffle/version"
 require "yaffle/railtie"
 require "yaffle/core_ext"
 
@@ -162,6 +175,7 @@ end
 ```ruby
 # yaffle/lib/yaffle.rb
 
+require "yaffle/version"
 require "yaffle/railtie"
 require "yaffle/core_ext"
 require "yaffle/acts_as_yaffle"
@@ -261,7 +275,9 @@ like yaffles.
 class Hickwall < ApplicationRecord
   acts_as_yaffle
 end
+```
 
+```ruby
 # test/dummy/app/models/wickwall.rb
 
 class Wickwall < ApplicationRecord
@@ -284,7 +300,9 @@ module Yaffle
     end
   end
 end
+```
 
+```ruby
 # test/dummy/app/models/application_record.rb
 
 class ApplicationRecord < ActiveRecord::Base
@@ -340,7 +358,9 @@ module Yaffle
     end
   end
 end
+```
 
+```ruby
 # test/dummy/app/models/application_record.rb
 
 class ApplicationRecord < ActiveRecord::Base
@@ -413,7 +433,9 @@ module Yaffle
     end
   end
 end
+```
 
+```ruby
 # test/dummy/app/models/application_record.rb
 
 class ApplicationRecord < ActiveRecord::Base
@@ -423,7 +445,7 @@ class ApplicationRecord < ActiveRecord::Base
 end
 ```
 
-Run `bin/test` one final time and you should see:
+Run `bin/test` one final time, and you should see:
 
 ```
   6 runs, 6 assertions, 0 failures, 0 errors, 0 skips
@@ -475,7 +497,7 @@ For more information about publishing gems to RubyGems, see: [Publishing your ge
 RDoc Documentation
 ------------------
 
-Once your plugin is stable and you are ready to deploy, do everyone else a favor and document it! Luckily, writing documentation for your plugin is easy.
+Once your plugin is stable, and you are ready to deploy, do everyone else a favor and document it! Luckily, writing documentation for your plugin is easy.
 
 The first step is to update the README file with detailed information about how to use your plugin. A few key things to include are:
 
@@ -484,7 +506,7 @@ The first step is to update the README file with detailed information about how 
 * How to add the functionality to the app (several examples of common use cases)
 * Warnings, gotchas or tips that might help users and save them time
 
-Once your README is solid, go through and add rdoc comments to all of the methods that developers will use. It's also customary to add `#:nodoc:` comments to those parts of the code that are not included in the public API.
+Once your README is solid, go through and add RDoc comments to all the methods that developers will use. It's also customary to add `# :nodoc:` comments to those parts of the code that are not included in the public API.
 
 Once your comments are good to go, navigate to your plugin directory and run:
 

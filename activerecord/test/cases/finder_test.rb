@@ -23,10 +23,16 @@ require "models/car"
 require "models/tyre"
 require "models/subscriber"
 require "models/non_primary_key"
+require "models/clothing_item"
 require "support/stubs/strong_parameters"
+require "support/async_helper"
 
 class FinderTest < ActiveRecord::TestCase
-  fixtures :companies, :topics, :entrants, :developers, :developers_projects, :posts, :comments, :accounts, :authors, :author_addresses, :customers, :categories, :categorizations, :cars
+  include AsyncHelper
+
+  fixtures :companies, :topics, :entrants, :developers, :developers_projects,
+    :posts, :comments, :accounts, :authors, :author_addresses, :customers,
+    :categories, :categorizations, :cars, :clothing_items
 
   def test_find_by_id_with_hash
     assert_nothing_raised do
@@ -47,6 +53,16 @@ class FinderTest < ActiveRecord::TestCase
   def test_find_with_hash_parameter
     assert_raises(ActiveRecord::RecordNotFound) { Post.find(foo: "bar") }
     assert_raises(ActiveRecord::RecordNotFound) { Post.find(foo: "bar", bar: "baz") }
+  end
+
+  def test_find_with_custom_select_excluding_id
+    # Returns ordered by ids array
+    topics = Topic.select(:title).find([4, 2, 5])
+    assert_equal [4, 2, 5], topics.map(&:id)
+
+    # Custom order
+    topics = Topic.select(:title).order(:id).find([4, 2, 5])
+    assert_equal [2, 4, 5], topics.map(&:id)
   end
 
   def test_find_with_proc_parameter_and_block
@@ -145,9 +161,12 @@ class FinderTest < ActiveRecord::TestCase
   end
 
   def test_find_passing_active_record_object_is_not_permitted
-    assert_raises(ArgumentError) do
+    error = assert_raises(ArgumentError) do
       Topic.find(Topic.last)
     end
+
+    assert_equal "You are passing an instance of ActiveRecord::Base to `find`. " \
+    "Please pass the id of the object by calling `.id`.", error.message
   end
 
   def test_symbols_table_ref
@@ -245,9 +264,12 @@ class FinderTest < ActiveRecord::TestCase
   end
 
   def test_exists_passing_active_record_object_is_not_permitted
-    assert_raises(ArgumentError) do
+    error = assert_raises(ArgumentError) do
       Topic.exists?(Topic.new)
     end
+
+    assert_equal "You are passing an instance of ActiveRecord::Base to `exists?`. " \
+    "Please pass the id of the object by calling `.id`.", error.message
   end
 
   def test_exists_does_not_select_columns_without_alias
@@ -314,6 +336,18 @@ class FinderTest < ActiveRecord::TestCase
     assert_equal false, Topic.where(id: 9223372036854775808..1).exists?
     assert_equal true, Topic.where(id: 1).or(Topic.where(id: 9223372036854775808)).exists?
     assert_equal true, Topic.where.not(id: 9223372036854775808).exists?
+
+    attr = Topic.predicate_builder
+
+    assert_predicate Topic.where(attr[:id, -9223372036854775809, :gt]),   :exists?
+    assert_predicate Topic.where(attr[:id, -9223372036854775809, :gteq]), :exists?
+    assert_predicate Topic.where(attr[:id,  9223372036854775808, :lt]),   :exists?
+    assert_predicate Topic.where(attr[:id,  9223372036854775808, :lteq]), :exists?
+
+    assert_not_predicate Topic.where(attr[:id,  9223372036854775808, :gt]),   :exists?
+    assert_not_predicate Topic.where(attr[:id,  9223372036854775808, :gteq]), :exists?
+    assert_not_predicate Topic.where(attr[:id, -9223372036854775809, :lt]),   :exists?
+    assert_not_predicate Topic.where(attr[:id, -9223372036854775809, :lteq]), :exists?
   end
 
   def test_exists_with_joins
@@ -410,6 +444,15 @@ class FinderTest < ActiveRecord::TestCase
     assert_equal false, Customer.order(id: :desc).limit(2).include?(david)
     assert_equal true,  Customer.order(id: :desc).limit(2).include?(barney)
     assert_equal true,  Customer.order(id: :desc).limit(2).include?(mary)
+  end
+
+  def test_include_on_unloaded_relation_with_having_referencing_aliased_select
+    skip if current_adapter?(:PostgreSQLAdapter)
+    bob = authors(:bob)
+    mary = authors(:mary)
+
+    assert_equal false, Author.select("COUNT(*) as total_posts", "authors.*").joins(:posts).group(:id).having("total_posts > 2").include?(bob)
+    assert_equal true, Author.select("COUNT(*) as total_posts", "authors.*").joins(:posts).group(:id).having("total_posts > 2").include?(mary)
   end
 
   def test_include_on_loaded_relation_with_match
@@ -575,6 +618,8 @@ class FinderTest < ActiveRecord::TestCase
 
     assert_equal(1, topics.size)
     assert_equal(topics(:second).title, topics.first.title)
+
+    assert_async_equal topics,  Topic.async_find_by_sql("SELECT * FROM topics WHERE author_name = 'Mary'")
   end
 
   def test_find_with_prepared_select_statement
@@ -622,6 +667,29 @@ class FinderTest < ActiveRecord::TestCase
   def test_take_bang_missing
     assert_raises_with_message ActiveRecord::RecordNotFound, "Couldn't find Topic" do
       Topic.where("title = 'This title does not exist'").take!
+    end
+  end
+
+  def test_sole
+    assert_equal topics(:first), Topic.where("title = 'The First Topic'").sole
+    assert_equal topics(:first), Topic.find_sole_by("title = 'The First Topic'")
+  end
+
+  def test_sole_failing_none
+    assert_raises_with_message ActiveRecord::RecordNotFound, "Couldn't find Topic" do
+      Topic.where("title = 'This title does not exist'").sole
+    end
+    assert_raises_with_message ActiveRecord::RecordNotFound, "Couldn't find Topic" do
+      Topic.find_sole_by("title = 'This title does not exist'")
+    end
+  end
+
+  def test_sole_failing_many
+    assert_raises_with_message ActiveRecord::SoleRecordExceeded, "Wanted only one Topic" do
+      Topic.where("author_name = 'Carl'").sole
+    end
+    assert_raises_with_message ActiveRecord::SoleRecordExceeded, "Wanted only one Topic" do
+      Topic.find_sole_by("author_name = 'Carl'")
     end
   end
 
@@ -817,6 +885,17 @@ class FinderTest < ActiveRecord::TestCase
     end
   end
 
+  def test_nth_to_last_with_order_uses_limit
+    c = Topic.connection
+    assert_sql(/ORDER BY #{Regexp.escape(c.quote_table_name("topics.id"))} DESC LIMIT/i) do
+      Topic.second_to_last
+    end
+
+    assert_sql(/ORDER BY #{Regexp.escape(c.quote_table_name("topics.updated_at"))} DESC LIMIT/i) do
+      Topic.order(:updated_at).second_to_last
+    end
+  end
+
   def test_last_bang_present
     assert_nothing_raised do
       assert_equal topics(:second), Topic.where("title = 'The Second Topic of the day'").last!
@@ -957,6 +1036,33 @@ class FinderTest < ActiveRecord::TestCase
     NonPrimaryKey.implicit_order_column = old_implicit_order_column
   end
 
+  def test_implicit_order_column_reorders_query_constraints
+    c = ClothingItem.connection
+    ClothingItem.implicit_order_column = "color"
+    quoted_type = Regexp.escape(c.quote_table_name("clothing_items.clothing_type"))
+    quoted_color = Regexp.escape(c.quote_table_name("clothing_items.color"))
+
+    assert_sql(/ORDER BY #{quoted_color} ASC, #{quoted_type} ASC LIMIT/i) do
+      assert_kind_of ClothingItem, ClothingItem.first
+    end
+  ensure
+    ClothingItem.implicit_order_column = nil
+  end
+
+  def test_implicit_order_column_prepends_query_constraints
+    c = ClothingItem.connection
+    ClothingItem.implicit_order_column = "description"
+    quoted_type = Regexp.escape(c.quote_table_name("clothing_items.clothing_type"))
+    quoted_color = Regexp.escape(c.quote_table_name("clothing_items.color"))
+    quoted_descrption = Regexp.escape(c.quote_table_name("clothing_items.description"))
+
+    assert_sql(/ORDER BY #{quoted_descrption} ASC, #{quoted_type} ASC, #{quoted_color} ASC LIMIT/i) do
+      assert_kind_of ClothingItem, ClothingItem.first
+    end
+  ensure
+    ClothingItem.implicit_order_column = nil
+  end
+
   def test_take_and_first_and_last_with_integer_should_return_an_array
     assert_kind_of Array, Topic.take(5)
     assert_kind_of Array, Topic.first(5)
@@ -1035,7 +1141,7 @@ class FinderTest < ActiveRecord::TestCase
   end
 
   def test_find_on_association_proxy_conditions
-    assert_equal [1, 2, 3, 5, 6, 7, 8, 9, 10, 12], Comment.where(post_id: authors(:david).posts).map(&:id).sort
+    assert_equal [1, 2, 3, 5, 6, 7, 8, 9, 10, 12, 13], Comment.where(post_id: authors(:david).posts).map(&:id).sort
   end
 
   def test_find_on_hash_conditions_with_range
@@ -1271,6 +1377,8 @@ class FinderTest < ActiveRecord::TestCase
     assert_equal(0, Entrant.count_by_sql("SELECT COUNT(*) FROM entrants WHERE id > 3"))
     assert_equal(1, Entrant.count_by_sql(["SELECT COUNT(*) FROM entrants WHERE id > ?", 2]))
     assert_equal(2, Entrant.count_by_sql(["SELECT COUNT(*) FROM entrants WHERE id > ?", 1]))
+
+    assert_async_equal 2, Entrant.async_count_by_sql(["SELECT COUNT(*) FROM entrants WHERE id > ?", 1])
   end
 
   def test_find_by_one_attribute
@@ -1435,8 +1543,8 @@ class FinderTest < ActiveRecord::TestCase
   end
 
   def test_select_values
-    assert_equal ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"], Company.connection.select_values("SELECT id FROM companies ORDER BY id").map!(&:to_s)
-    assert_equal ["37signals", "Summit", "Microsoft", "Flamboyant Software", "Ex Nihilo", "RailsCore", "Leetsoft", "Jadedpixel", "Odegy", "Ex Nihilo Part Deux", "Apex"], Company.connection.select_values("SELECT name FROM companies ORDER BY id")
+    assert_equal ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "15"], Company.connection.select_values("SELECT id FROM companies ORDER BY id").map!(&:to_s)
+    assert_equal ["37signals", "Summit", "Microsoft", "Flamboyant Software", "Ex Nihilo", "RailsCore", "Leetsoft", "Jadedpixel", "Odegy", "Ex Nihilo Part Deux", "Apex", "RVshare"], Company.connection.select_values("SELECT name FROM companies ORDER BY id")
   end
 
   def test_select_rows
@@ -1598,9 +1706,11 @@ class FinderTest < ActiveRecord::TestCase
   end
 
   test "find_by! raises RecordNotFound if the record is missing" do
-    assert_raises(ActiveRecord::RecordNotFound) do
+    error = assert_raises(ActiveRecord::RecordNotFound) do
       Post.find_by!("1 = 0")
     end
+
+    assert_equal "Couldn't find Post with [WHERE (1 = 0)]", error.message
   end
 
   test "find on a scope does not perform statement caching" do
@@ -1648,6 +1758,26 @@ class FinderTest < ActiveRecord::TestCase
         Topic.eager_load(:replies).limit(1).skip_query_cache!.exists?
         Topic.eager_load(:replies).limit(1).skip_query_cache!.exists?
       end
+    end
+  end
+
+  test "#last for a model with composite query constraints" do
+    c = ClothingItem.connection
+    quoted_type = Regexp.escape(c.quote_table_name("clothing_items.clothing_type"))
+    quoted_color = Regexp.escape(c.quote_table_name("clothing_items.color"))
+
+    assert_sql(/ORDER BY #{quoted_type} DESC, #{quoted_color} DESC LIMIT/i) do
+      assert_kind_of ClothingItem, ClothingItem.last
+    end
+  end
+
+  test "#first for a model with composite query constraints" do
+    c = ClothingItem.connection
+    quoted_type = Regexp.escape(c.quote_table_name("clothing_items.clothing_type"))
+    quoted_color = Regexp.escape(c.quote_table_name("clothing_items.color"))
+
+    assert_sql(/ORDER BY #{quoted_type} ASC, #{quoted_color} ASC LIMIT/i) do
+      assert_kind_of ClothingItem, ClothingItem.first
     end
   end
 

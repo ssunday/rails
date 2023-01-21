@@ -27,7 +27,7 @@ module ActiveRecord
     # is computed directly through SQL and does not trigger by itself the
     # instantiation of the actual post records.
     class CollectionProxy < Relation
-      def initialize(klass, association, **) #:nodoc:
+      def initialize(klass, association, **) # :nodoc:
         @association = association
         super klass
 
@@ -218,7 +218,7 @@ module ActiveRecord
       # :call-seq:
       #   third_to_last()
       #
-      # Same as #first except returns only the third-to-last record.
+      # Same as #last except returns only the third-to-last record.
 
       ##
       # :method: second_to_last
@@ -226,7 +226,7 @@ module ActiveRecord
       # :call-seq:
       #   second_to_last()
       #
-      # Same as #first except returns only the second-to-last record.
+      # Same as #last except returns only the second-to-last record.
 
       # Returns the last record, or the last +n+ records, from the collection.
       # If the collection is empty, the first form returns +nil+, and the second
@@ -475,7 +475,7 @@ module ActiveRecord
 
       # Deletes the records of the collection directly from the database
       # ignoring the +:dependent+ option. Records are instantiated and it
-      # invokes +before_remove+, +after_remove+ , +before_destroy+ and
+      # invokes +before_remove+, +after_remove+, +before_destroy+, and
       # +after_destroy+ callbacks.
       #
       #   class Person < ActiveRecord::Base
@@ -813,7 +813,7 @@ module ActiveRecord
       # to <tt>collection.size.zero?</tt>. If the collection has not been loaded,
       # it is equivalent to <tt>!collection.exists?</tt>. If the collection has
       # not already been loaded and you are going to fetch the records anyway it
-      # is better to check <tt>collection.length.zero?</tt>.
+      # is better to check <tt>collection.load.empty?</tt>.
       #
       #   class Person < ActiveRecord::Base
       #     has_many :pets
@@ -848,6 +848,11 @@ module ActiveRecord
       #   person.pets << Pet.new(name: 'Snoop')
       #   person.pets.count # => 1
       #   person.pets.any?  # => true
+      #
+      # Calling it without a block when the collection is not yet
+      # loaded is equivalent to <tt>collection.exists?</tt>.
+      # If you're going to load the collection anyway, it is better
+      # to call <tt>collection.load.any?</tt> to avoid an extra query.
       #
       # You can also pass a +block+ to define criteria. The behavior
       # is the same, it returns true if the collection based on the
@@ -950,10 +955,13 @@ module ActiveRecord
       #   person.pets == other
       #   # => true
       #
+      #
+      # Note that unpersisted records can still be seen as equal:
+      #
       #   other = [Pet.new(id: 1), Pet.new(id: 2)]
       #
       #   person.pets == other
-      #   # => false
+      #   # => true
       def ==(other)
         load_target == other
       end
@@ -1103,7 +1111,7 @@ module ActiveRecord
       ].flat_map { |klass|
         klass.public_instance_methods(false)
       } - self.public_instance_methods(false) - [:select] + [
-        :scoping, :values, :insert, :insert_all, :insert!, :insert_all!, :upsert, :upsert_all
+        :scoping, :values, :insert, :insert_all, :insert!, :insert_all!, :upsert, :upsert_all, :load_async
       ]
 
       delegate(*delegate_methods, to: :scope)

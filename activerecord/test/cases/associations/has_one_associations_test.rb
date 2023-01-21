@@ -17,6 +17,7 @@ require "models/chef"
 require "models/department"
 require "models/club"
 require "models/membership"
+require "models/parrot"
 
 class HasOneAssociationsTest < ActiveRecord::TestCase
   self.use_transactional_tests = false unless supports_savepoints?
@@ -307,6 +308,19 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
     assert_equal account, firm.reload.account
   end
 
+  def test_clearing_an_association_clears_the_associations_inverse
+    author = Author.create(name: "Jimmy Tolkien")
+    post = author.create_post(title: "The silly medallion", body: "")
+    assert_equal post, author.post
+    assert_equal author, post.author
+
+    post.update!(author: nil)
+    assert_nil post.author
+
+    author.update!(name: "J.R.R. Tolkien")
+    assert_nil post.author
+  end
+
   def test_create_association_with_bang
     firm = Firm.create(name: "GlobalMegaCorp")
     account = firm.create_account!(credit_limit: 1000)
@@ -340,6 +354,7 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
     end
 
     assert_equal "You cannot call create unless the parent is saved", error.message
+    assert_equal firm, error.record
   end
 
   def test_reload_association
@@ -349,7 +364,9 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
     Account.where(id: odegy.account.id).update_all(credit_limit: 80)
     assert_equal 53, odegy.account.credit_limit
 
-    assert_equal 80, odegy.reload_account.credit_limit
+    assert_queries(1) { odegy.reload_account }
+    assert_no_queries { odegy.account }
+    assert_equal 80, odegy.account.credit_limit
   end
 
   def test_reload_association_with_query_cache
@@ -373,6 +390,19 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
     assert_queries(1) { Company.find(odegy_id) }
   ensure
     ActiveRecord::Base.connection.disable_query_cache!
+  end
+
+  def test_reset_assocation
+    odegy = companies(:odegy)
+
+    assert_equal 53, odegy.account.credit_limit
+    Account.where(id: odegy.account.id).update_all(credit_limit: 80)
+    assert_equal 53, odegy.account.credit_limit
+
+    assert_no_queries { odegy.reset_account }
+
+    assert_queries(1) { odegy.account }
+    assert_equal 80, odegy.account.credit_limit
   end
 
   def test_build
@@ -488,7 +518,7 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
     assert_equal new_account.firm_name, "Account"
   end
 
-  def test_creation_failure_without_dependent_option
+  def test_create_association_replaces_existing_without_dependent_option
     pirate = pirates(:blackbeard)
     orig_ship = pirate.ship
 
@@ -501,7 +531,7 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
     assert_not orig_ship.changed? # check it was saved
   end
 
-  def test_creation_failure_with_dependent_option
+  def test_create_association_replaces_existing_with_dependent_option
     pirate = pirates(:blackbeard).becomes(DestructivePirate)
     orig_ship = pirate.dependent_ship
 
@@ -519,6 +549,7 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
     end
 
     assert_equal "Failed to save the new associated ship.", error.message
+    assert_equal new_ship, error.record
     assert_nil pirate.ship
     assert_nil new_ship.pirate_id
   end
@@ -536,6 +567,7 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
     assert_equal pirate.id, pirate.ship.pirate_id
     assert_equal "Failed to remove the existing associated ship. " \
                  "The record failed to save after its foreign key was set to nil.", error.message
+    assert_equal pirate.ship, error.record
   end
 
   def test_replacement_failure_due_to_new_record_should_raise_error
@@ -547,6 +579,7 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
     end
 
     assert_equal "Failed to save the new associated ship.", error.message
+    assert_equal new_ship, error.record
     assert_equal ships(:black_pearl), pirate.ship
     assert_equal pirate.id, pirate.ship.pirate_id
     assert_equal pirate.id, ships(:black_pearl).reload.pirate_id
@@ -706,7 +739,7 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
 
   def test_has_one_with_touch_option_on_create
     assert_queries(3) {
-      Club.create(name: "1000 Oaks", membership_attributes: { favourite: true })
+      Club.create(name: "1000 Oaks", membership_attributes: { favorite: true })
     }
   end
 
@@ -759,7 +792,7 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
   class SpecialBook < ActiveRecord::Base
     self.table_name = "books"
     belongs_to :author, class_name: "SpecialAuthor"
-    has_one :subscription, class_name: "SpecialSupscription", foreign_key: "subscriber_id"
+    has_one :subscription, class_name: "SpecialSubscription", foreign_key: "subscriber_id"
 
     enum status: [:proposed, :written, :published]
   end
@@ -769,7 +802,7 @@ class HasOneAssociationsTest < ActiveRecord::TestCase
     has_one :book, class_name: "SpecialBook", foreign_key: "author_id"
   end
 
-  class SpecialSupscription < ActiveRecord::Base
+  class SpecialSubscription < ActiveRecord::Base
     self.table_name = "subscriptions"
     belongs_to :book, class_name: "SpecialBook"
   end

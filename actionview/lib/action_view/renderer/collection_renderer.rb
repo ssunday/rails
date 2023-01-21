@@ -47,6 +47,14 @@ module ActionView
       def size
         @collection.size
       end
+
+      def length
+        @collection.respond_to?(:length) ? @collection.length : size
+      end
+
+      def preload!
+        # no-op
+      end
     end
 
     class SameCollectionIterator < CollectionIterator # :nodoc:
@@ -80,8 +88,12 @@ module ActionView
 
       def each_with_info
         return super unless block_given?
-        @relation.preload_associations(@collection)
+        preload!
         super
+      end
+
+      def preload!
+        @relation.preload_associations(@collection)
       end
     end
 
@@ -144,7 +156,7 @@ module ActionView
           "render_collection.action_view",
           identifier: identifier,
           layout: layout && layout.virtual_path,
-          count: collection.size
+          count: collection.length
         ) do |payload|
           spacer = if @options.key?(:spacer_template)
             spacer_template = find_template(@options[:spacer_template], @locals.keys)

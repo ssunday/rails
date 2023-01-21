@@ -21,6 +21,12 @@ module ActionMailbox
     config.action_mailbox.queues = ActiveSupport::InheritableOptions.new \
       incineration: :action_mailbox_incineration, routing: :action_mailbox_routing
 
+    config.action_mailbox.storage_service = nil
+
+    initializer "action_mailbox.deprecator", before: :load_environment_config do |app|
+      app.deprecators[:action_mailbox] = ActionMailbox.deprecator
+    end
+
     initializer "action_mailbox.config" do
       config.after_initialize do |app|
         ActionMailbox.logger = app.config.action_mailbox.logger || Rails.logger
@@ -29,6 +35,7 @@ module ActionMailbox
         ActionMailbox.queues = app.config.action_mailbox.queues || {}
         ActionMailbox.amazon = app.config.action_mailbox.amazon || {}
         ActionMailbox.ingress = app.config.action_mailbox.ingress
+        ActionMailbox.storage_service = app.config.action_mailbox.storage_service
       end
     end
   end

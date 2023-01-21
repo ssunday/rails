@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "active_support/dependencies"
+require "active_support/core_ext/name_error"
 
 module AbstractController
   module Helpers
@@ -40,6 +41,38 @@ module AbstractController
       self.class._helpers
     end
 
+    module Resolution # :nodoc:
+      def modules_for_helpers(modules_or_helper_prefixes)
+        modules_or_helper_prefixes.flatten.map! do |module_or_helper_prefix|
+          case module_or_helper_prefix
+          when Module
+            module_or_helper_prefix
+          when String, Symbol
+            helper_prefix = module_or_helper_prefix.to_s
+            helper_prefix = helper_prefix.camelize unless helper_prefix.start_with?(/[A-Z]/)
+            "#{helper_prefix}Helper".constantize
+          else
+            raise ArgumentError, "helper must be a String, Symbol, or Module"
+          end
+        end
+      end
+
+      def all_helpers_from_path(path)
+        helpers = Array(path).flat_map do |_path|
+          names = Dir["#{_path}/**/*_helper.rb"].map { |file| file[_path.to_s.size + 1..-"_helper.rb".size - 1] }
+          names.sort!
+        end
+        helpers.uniq!
+        helpers
+      end
+
+      def helper_modules_from_paths(paths)
+        modules_for_helpers(all_helpers_from_path(paths))
+      end
+    end
+
+    extend Resolution
+
     module ClassMethods
       # When a class is inherited, wrap its helper module in a new module.
       # This ensures that the parent class's module can be changed
@@ -54,19 +87,44 @@ module AbstractController
 
       attr_writer :_helpers
 
+      include Resolution
+
+      ##
+      # :method: modules_for_helpers
+      # :call-seq: modules_for_helpers(modules_or_helper_prefixes)
+      #
+      # Given an array of values like the ones accepted by +helper+, this method
+      # returns an array with the corresponding modules, in the same order.
+      #
+      #--
+      # Implemented by Resolution#modules_for_helpers.
+
+      ##
+      # :method: all_helpers_from_path
+      # :call-seq: all_helpers_from_path(path)
+      #
+      # Returns a list of helper names in a given path.
+      #
+      #   ActionController::Base.all_helpers_from_path 'app/helpers'
+      #   # => ["application", "chart", "rubygems"]
+      #
+      #--
+      # Implemented by Resolution#all_helpers_from_path.
+
       # Declare a controller method as a helper. For example, the following
       # makes the +current_user+ and +logged_in?+ controller methods available
       # to the view:
       #   class ApplicationController < ActionController::Base
       #     helper_method :current_user, :logged_in?
       #
-      #     def current_user
-      #       @current_user ||= User.find_by(id: session[:user])
-      #     end
+      #     private
+      #       def current_user
+      #         @current_user ||= User.find_by(id: session[:user])
+      #       end
       #
-      #     def logged_in?
-      #       current_user != nil
-      #     end
+      #       def logged_in?
+      #         current_user != nil
+      #       end
       #   end
       #
       # In a view:
@@ -83,11 +141,14 @@ module AbstractController
         file, line = location.path, location.lineno
 
         methods.each do |method|
-          _helpers_for_modification.class_eval <<-ruby_eval, file, line
-            def #{method}(*args, &block)                    # def current_user(*args, &block)
-              controller.send(:'#{method}', *args, &block)  #   controller.send(:'current_user', *args, &block)
-            end                                             # end
-            ruby2_keywords(:'#{method}') if respond_to?(:ruby2_keywords, true)
+          # def current_user(*args, &block)
+          #   controller.send(:'current_user', *args, &block)
+          # end
+          _helpers_for_modification.class_eval <<~ruby_eval.lines.map(&:strip).join(";"), file, line
+            def #{method}(*args, &block)
+              controller.send(:'#{method}', *args, &block)
+            end
+            ruby2_keywords(:'#{method}')
           ruby_eval
         end
       end
@@ -109,7 +170,7 @@ module AbstractController
       # The last two assume that <tt>"foo".camelize</tt> returns "Foo".
       #
       # When strings or symbols are passed, the method finds the actual module
-      # object using +String#constantize+. Therefore, if the module has not been
+      # object using String#constantize. Therefore, if the module has not been
       # yet loaded, it has to be autoloadable, which is normally the case.
       #
       # Namespaces are supported. The following calls include +Foo::BarHelper+:
@@ -161,23 +222,6 @@ module AbstractController
 
         inherited_helper_methods.each { |meth| helper_method meth }
         default_helper_module! unless anonymous?
-      end
-
-      # Given an array of values like the ones accepted by +helper+, this method
-      # returns an array with the corresponding modules, in the same order.
-      def modules_for_helpers(modules_or_helper_prefixes)
-        modules_or_helper_prefixes.flatten.map! do |module_or_helper_prefix|
-          case module_or_helper_prefix
-          when Module
-            module_or_helper_prefix
-          when String, Symbol
-            helper_prefix = module_or_helper_prefix.to_s
-            helper_prefix = helper_prefix.camelize unless helper_prefix.start_with?(/[A-Z]/)
-            "#{helper_prefix}Helper".constantize
-          else
-            raise ArgumentError, "helper must be a String, Symbol, or Module"
-          end
-        end
       end
 
       def _helpers_for_modification

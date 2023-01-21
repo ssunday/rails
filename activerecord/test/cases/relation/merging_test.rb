@@ -60,38 +60,23 @@ class RelationMergingTest < ActiveRecord::TestCase
     assert_equal [david, mary], david_and_mary
     assert_equal [mary, bob],   mary_and_bob
 
-    author_id = Regexp.escape(Author.connection.quote_table_name("authors.id"))
-    message = %r/Merging \(#{author_id} BETWEEN (\?|\W?\w?\d) AND \g<1>\) and \(#{author_id} (?:= \g<1>|IN \(\g<1>, \g<1>\))\) no longer maintain both conditions, and will be replaced by the latter in Rails 6\.2\./
-
-    assert_deprecated(message) do
-      assert_equal [mary], david_and_mary.merge(Author.where(id: mary))
-    end
+    assert_equal [mary], david_and_mary.merge(Author.where(id: mary))
     assert_equal [mary], david_and_mary.merge(Author.rewhere(id: mary))
     assert_equal [mary], david_and_mary.merge(Author.where(id: mary), rewhere: true)
 
-    assert_deprecated(message) do
-      assert_equal [], david_and_mary.merge(Author.where(id: bob))
-    end
+    assert_equal [bob], david_and_mary.merge(Author.where(id: bob))
     assert_equal [bob],  david_and_mary.merge(Author.rewhere(id: bob))
     assert_equal [bob],  david_and_mary.merge(Author.where(id: bob), rewhere: true)
 
-    assert_deprecated(message) do
-      assert_equal [bob], mary_and_bob.merge(Author.where(id: [david, bob]))
-    end
+    assert_equal [david, bob], mary_and_bob.merge(Author.where(id: [david, bob]))
     assert_equal [david, bob], mary_and_bob.merge(Author.where(id: [david, bob]), rewhere: true)
 
-    message = %r/Merging \(#{author_id} BETWEEN (\?|\W?\w?\d) AND \g<1>\) and \(#{author_id} BETWEEN \g<1> AND \g<1>\) no longer maintain both conditions, and will be replaced by the latter in Rails 6\.2\./
-
-    assert_deprecated(message) do
-      assert_equal [mary], david_and_mary.merge(mary_and_bob)
-    end
+    assert_equal [mary, bob], david_and_mary.merge(mary_and_bob)
     assert_equal [mary, bob], david_and_mary.merge(mary_and_bob, rewhere: true)
     assert_equal [mary], david_and_mary.and(mary_and_bob)
     assert_equal authors, david_and_mary.or(mary_and_bob)
 
-    assert_deprecated(message) do
-      assert_equal [mary], mary_and_bob.merge(david_and_mary)
-    end
+    assert_equal [david, mary], mary_and_bob.merge(david_and_mary)
     assert_equal [david, mary], mary_and_bob.merge(david_and_mary, rewhere: true)
     assert_equal [mary], david_and_mary.and(mary_and_bob)
     assert_equal authors, david_and_mary.or(mary_and_bob)
@@ -113,38 +98,24 @@ class RelationMergingTest < ActiveRecord::TestCase
     assert_equal [david, mary], david_and_mary
     assert_equal [mary, bob],   mary_and_bob
 
-    author_id = Regexp.escape(Author.connection.quote_table_name("authors.id"))
-    message = %r/Merging \(\(#{author_id} = (\?|\W?\w?\d) OR #{author_id} = \g<1>\)\) and \(#{author_id} (?:= \g<1>|IN \(\g<1>, \g<1>\))\) no longer maintain both conditions, and will be replaced by the latter in Rails 6\.2\./
-
-    assert_deprecated(message) do
-      assert_equal [mary], david_and_mary.merge(Author.where(id: mary))
-    end
+    assert_equal [mary], david_and_mary.merge(Author.where(id: mary))
     assert_equal [mary], david_and_mary.merge(Author.rewhere(id: mary))
     assert_equal [mary], david_and_mary.merge(Author.where(id: mary), rewhere: true)
 
-    assert_deprecated(message) do
-      assert_equal [], david_and_mary.merge(Author.where(id: bob))
-    end
+    assert_equal [bob], david_and_mary.merge(Author.where(id: bob))
     assert_equal [bob],  david_and_mary.merge(Author.rewhere(id: bob))
     assert_equal [bob],  david_and_mary.merge(Author.where(id: bob), rewhere: true)
 
-    assert_deprecated(message) do
-      assert_equal [bob], mary_and_bob.merge(Author.where(id: [david, bob]))
-    end
+    assert_equal [david, bob], mary_and_bob.merge(Author.where(id: [david, bob]))
     assert_equal [david, bob], mary_and_bob.merge(Author.where(id: [david, bob]), rewhere: true)
 
-    message = %r/Merging \(\(#{author_id} = (\?|\W?\w?\d) OR #{author_id} = \g<1>\)\) and \(\(#{author_id} = \g<1> OR #{author_id} = \g<1>\)\) no longer maintain both conditions, and will be replaced by the latter in Rails 6\.2\./
 
-    assert_deprecated(message) do
-      assert_equal [mary], david_and_mary.merge(mary_and_bob)
-    end
+    assert_equal [mary, bob], david_and_mary.merge(mary_and_bob)
     assert_equal [mary, bob], david_and_mary.merge(mary_and_bob, rewhere: true)
     assert_equal [mary], david_and_mary.and(mary_and_bob)
     assert_equal authors, david_and_mary.or(mary_and_bob)
 
-    assert_deprecated(message) do
-      assert_equal [mary], mary_and_bob.merge(david_and_mary)
-    end
+    assert_equal [david, mary], mary_and_bob.merge(david_and_mary)
     assert_equal [david, mary], mary_and_bob.merge(david_and_mary, rewhere: true)
     assert_equal [mary], david_and_mary.and(mary_and_bob)
     assert_equal authors, david_and_mary.or(mary_and_bob)
@@ -164,14 +135,10 @@ class RelationMergingTest < ActiveRecord::TestCase
 
     assert_equal [david], non_mary_and_bob
 
-    assert_deprecated do
-      assert_equal [david], Author.where(id: david).merge(non_mary_and_bob)
-    end
+    assert_equal [david], Author.where(id: david).merge(non_mary_and_bob)
     assert_equal [david], Author.where(id: david).merge(non_mary_and_bob, rewhere: true)
 
-    assert_deprecated do
-      assert_equal [], Author.where(id: mary).merge(non_mary_and_bob)
-    end
+    assert_equal [david], Author.where(id: mary).merge(non_mary_and_bob)
     assert_equal [david], Author.where(id: mary).merge(non_mary_and_bob, rewhere: true)
   end
 
@@ -182,14 +149,10 @@ class RelationMergingTest < ActiveRecord::TestCase
 
     assert_equal [david, mary], less_than_bob
 
-    assert_deprecated do
-      assert_equal [david], Author.where(id: david).merge(less_than_bob)
-    end
+    assert_equal [david, mary], Author.where(id: david).merge(less_than_bob)
     assert_equal [david, mary], Author.where(id: david).merge(less_than_bob, rewhere: true)
 
-    assert_deprecated do
-      assert_equal [mary], Author.where(id: mary).merge(less_than_bob)
-    end
+    assert_equal [david, mary], Author.where(id: mary).merge(less_than_bob)
     assert_equal [david, mary], Author.where(id: mary).merge(less_than_bob, rewhere: true)
   end
 
@@ -205,8 +168,22 @@ class RelationMergingTest < ActiveRecord::TestCase
 
     only_david = Author.where("#{author_id} IN (?)", david)
 
-    assert_sql(/WHERE \(#{Regexp.escape(author_id)} IN \(1\)\)\z/) do
-      assert_equal [david], only_david.merge(only_david)
+    if current_adapter?(:Mysql2Adapter)
+      assert_sql(/WHERE \(#{Regexp.escape(author_id)} IN \('1'\)\)\z/) do
+        assert_equal [david], only_david.merge(only_david)
+      end
+
+      assert_sql(/WHERE \(#{Regexp.escape(author_id)} IN \('1'\)\)\z/) do
+        assert_equal [david], only_david.merge(only_david, rewhere: true)
+      end
+    else
+      assert_sql(/WHERE \(#{Regexp.escape(author_id)} IN \(1\)\)\z/) do
+        assert_equal [david], only_david.merge(only_david)
+      end
+
+      assert_sql(/WHERE \(#{Regexp.escape(author_id)} IN \(1\)\)\z/) do
+        assert_equal [david], only_david.merge(only_david, rewhere: true)
+      end
     end
   end
 
@@ -360,25 +337,14 @@ class RelationMergingTest < ActiveRecord::TestCase
       posts.merge(posts).uniq!(:annotate).to_a
     end
 
-    message = <<-MSG.squish
-      Duplicated query annotations are no longer shown in queries in Rails 6.2.
-      To migrate to Rails 6.2's behavior, use `uniq!(:annotate)` to deduplicate query annotations
-      (`posts.uniq!(:annotate)`).
-    MSG
-    assert_deprecated(message) do
-      assert_sql(%r{FROM #{Regexp.escape(Post.quoted_table_name)} /\* foo \*/ /\* foo \*/\z}) do
-        posts.merge(posts).to_a
-      end
+    assert_sql(%r{FROM #{Regexp.escape(Post.quoted_table_name)} /\* foo \*/\z}) do
+      posts.merge(posts).to_a
     end
-    assert_deprecated(message) do
-      assert_sql(%r{FROM #{Regexp.escape(Post.quoted_table_name)} /\* foo \*/ /\* bar \*/ /\* foo \*/\z}) do
-        Post.annotate("foo").merge(Post.annotate("bar")).merge(posts).to_a
-      end
+    assert_sql(%r{FROM #{Regexp.escape(Post.quoted_table_name)} /\* foo \*/ /\* bar \*/\z}) do
+      Post.annotate("foo").merge(Post.annotate("bar")).merge(posts).to_a
     end
-    assert_deprecated(message) do
-      assert_sql(%r{FROM #{Regexp.escape(Post.quoted_table_name)} /\* bar \*/ /\* foo \*/ /\* foo \*/\z}) do
-        Post.annotate("bar").merge(Post.annotate("foo")).merge(posts).to_a
-      end
+    assert_sql(%r{FROM #{Regexp.escape(Post.quoted_table_name)} /\* bar \*/ /\* foo \*/\z}) do
+      Post.annotate("bar").merge(Post.annotate("foo")).merge(posts).to_a
     end
   end
 end
@@ -426,5 +392,34 @@ class MergingDifferentRelationsTest < ActiveRecord::TestCase
     comment_2.ratings.create!
 
     assert_equal dev.ratings, [rating_1]
+  end
+
+  if ActiveRecord::Base.connection.supports_common_table_expressions?
+    test "merging relation with common table expression" do
+      posts_with_tags = Post.with(posts_with_tags: Post.where("tags_count > 0")).from("posts_with_tags AS posts")
+      posts_with_comments = Post.where("legacy_comments_count > 0")
+      relation = posts_with_comments.merge(posts_with_tags).order("posts.id")
+
+      assert_equal [1, 2, 7], relation.pluck(:id)
+    end
+
+    test "merging multiple relations with common table expression" do
+      posts_with_tags = Post.with(posts_with_tags: Post.where("tags_count > 0"))
+      posts_with_comments = Post.with(posts_with_comments: Post.where("legacy_comments_count > 0"))
+      relation = posts_with_comments.merge(posts_with_tags)
+        .joins("JOIN posts_with_tags pwt ON pwt.id = posts.id JOIN posts_with_comments pwc ON pwc.id = posts.id").order("posts.id")
+
+      assert_equal [1, 2, 7], relation.pluck(:id)
+    end
+
+    test "relation merger leaves to database to decide what to do when multiple CTEs with same alias are passed" do
+      posts_with_tags = Post.with(popular_posts: Post.where("tags_count > 0"))
+      posts_with_comments = Post.with(popular_posts: Post.where("legacy_comments_count > 0"))
+      relation = posts_with_tags.merge(posts_with_comments).joins("JOIN popular_posts pp ON pp.id = posts.id")
+
+      assert_raises ActiveRecord::StatementInvalid do
+        relation.load
+      end
+    end
   end
 end

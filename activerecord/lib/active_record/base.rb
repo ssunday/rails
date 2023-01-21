@@ -12,7 +12,7 @@ require "active_record/attributes"
 require "active_record/type_caster"
 require "active_record/database_configurations"
 
-module ActiveRecord #:nodoc:
+module ActiveRecord # :nodoc:
   # = Active Record
   #
   # Active Record objects don't specify their attributes directly, but rather infer them from
@@ -136,6 +136,23 @@ module ActiveRecord #:nodoc:
   #
   #   anonymous = User.new(name: "")
   #   anonymous.name? # => false
+  #
+  # Query methods will also respect any overrides of default accessors:
+  #
+  #   class User
+  #     # Has admin boolean column
+  #     def admin
+  #       false
+  #     end
+  #   end
+  #
+  #   user.update(admin: true)
+  #
+  #   user.read_attribute(:admin)  # => true, gets the column value
+  #   user[:admin] # => true, also gets the column value
+  #
+  #   user.admin   # => false, due to the getter override
+  #   user.admin?  # => false, due to the getter override
   #
   # == Accessing attributes before they have been typecasted
   #
@@ -294,11 +311,12 @@ module ActiveRecord #:nodoc:
     include Attributes
     include Locking::Optimistic
     include Locking::Pessimistic
+    include Encryption::EncryptableRecord
     include AttributeMethods
     include Callbacks
     include Timestamp
     include Associations
-    include ActiveModel::SecurePassword
+    include SecurePassword
     include AutosaveAssociation
     include NestedAttributes
     include Transactions
@@ -308,8 +326,10 @@ module ActiveRecord #:nodoc:
     include Serialization
     include Store
     include SecureToken
+    include TokenFor
     include SignedId
     include Suppressor
+    include Normalization
   end
 
   ActiveSupport.run_load_hooks(:active_record, Base)

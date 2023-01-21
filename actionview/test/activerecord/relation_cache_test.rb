@@ -10,6 +10,7 @@ class RelationCacheTest < ActionView::TestCase
     view_paths     = ActionController::Base.view_paths
     lookup_context = ActionView::LookupContext.new(view_paths, {}, ["test"])
     @view_renderer = ActionView::Renderer.new(lookup_context)
+    @virtual_path  = "path"
     @current_template = lookup_context.find "test/hello_world"
 
     controller.cache_store = ActiveSupport::Cache::MemoryStore.new
@@ -24,7 +25,7 @@ class RelationCacheTest < ActionView::TestCase
 
   def view_cache_dependencies; []; end
 
-  def assert_queries(num)
+  def assert_queries(num, &block)
     ActiveRecord::Base.connection.materialize_transactions
     count = 0
 
@@ -32,7 +33,7 @@ class RelationCacheTest < ActionView::TestCase
       count += 1 unless ["SCHEMA", "TRANSACTION"].include? payload[:name]
     end
 
-    result = yield
+    result = _assert_nothing_raised_or_warn("assert_queries", &block)
     assert_equal num, count, "#{count} instead of #{num} queries were executed."
     result
   end

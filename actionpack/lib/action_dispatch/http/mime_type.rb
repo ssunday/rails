@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "singleton"
-require "active_support/core_ext/symbol/starts_ends_with"
 
 module Mime
   class Mimes
@@ -14,8 +13,8 @@ module Mime
       @symbols = []
     end
 
-    def each
-      @mimes.each { |x| yield x }
+    def each(&block)
+      @mimes.each(&block)
     end
 
     def <<(type)
@@ -43,9 +42,9 @@ module Mime
       Type.lookup_by_extension(type)
     end
 
-    def fetch(type)
+    def fetch(type, &block)
       return type if type.is_a?(Type)
-      EXTENSION_LOOKUP.fetch(type.to_s) { |k| yield k }
+      EXTENSION_LOOKUP.fetch(type.to_s, &block)
     end
   end
 
@@ -68,7 +67,7 @@ module Mime
     @register_callbacks = []
 
     # A simple helper class used in parsing the accept header.
-    class AcceptItem #:nodoc:
+    class AcceptItem # :nodoc:
       attr_accessor :index, :name, :q
       alias :to_s :name
 
@@ -86,7 +85,7 @@ module Mime
       end
     end
 
-    class AcceptList #:nodoc:
+    class AcceptList # :nodoc:
       def self.sort!(list)
         list.sort!
 
@@ -172,9 +171,11 @@ module Mime
 
       def parse(accept_header)
         if !accept_header.include?(",")
-          accept_header = accept_header.split(PARAMETER_SEPARATOR_REGEXP).first
-          return [] unless accept_header
-          parse_trailing_star(accept_header) || [Mime::Type.lookup(accept_header)].compact
+          if (index = accept_header.index(PARAMETER_SEPARATOR_REGEXP))
+            accept_header = accept_header[0, index]
+          end
+          return [] if accept_header.blank?
+          parse_trailing_star(accept_header) || Array(Mime::Type.lookup(accept_header))
         else
           list, index = [], 0
           accept_header.split(",").each do |header|
@@ -226,10 +227,9 @@ module Mime
     attr_reader :hash
 
     MIME_NAME = "[a-zA-Z0-9][a-zA-Z0-9#{Regexp.escape('!#$&-^_.+')}]{0,126}"
-    MIME_PARAMETER_KEY = "[a-zA-Z0-9][a-zA-Z0-9#{Regexp.escape('!#$&-^_.+')}]{0,126}"
-    MIME_PARAMETER_VALUE = "#{Regexp.escape('"')}?[a-zA-Z0-9][a-zA-Z0-9#{Regexp.escape('!#$&-^_.+')}]{0,126}#{Regexp.escape('"')}?"
-    MIME_PARAMETER = "\s*\;\s*#{MIME_PARAMETER_KEY}(?:\=#{MIME_PARAMETER_VALUE})?"
-    MIME_REGEXP = /\A(?:\*\/\*|#{MIME_NAME}\/(?:\*|#{MIME_NAME})(?:\s*#{MIME_PARAMETER}\s*)*)\z/
+    MIME_PARAMETER_VALUE = "#{Regexp.escape('"')}?#{MIME_NAME}#{Regexp.escape('"')}?"
+    MIME_PARAMETER = "\s*;\s*#{MIME_NAME}(?:=#{MIME_PARAMETER_VALUE})?"
+    MIME_REGEXP = /\A(?:\*\/\*|#{MIME_NAME}\/(?:\*|#{MIME_NAME})(?>#{MIME_PARAMETER})*\s*)\z/
 
     class InvalidMimeType < StandardError; end
 
@@ -293,7 +293,7 @@ module Mime
     end
 
     def html?
-      (symbol == :html) || /html/.match?(@string)
+      (symbol == :html) || @string.include?("html")
     end
 
     def all?; false; end
@@ -330,7 +330,7 @@ module Mime
   end
 
   # ALL isn't a real MIME type, so we don't register it for lookup with the
-  # other concrete types. It's a wildcard match that we use for `respond_to`
+  # other concrete types. It's a wildcard match that we use for +respond_to+
   # negotiation internals.
   ALL = AllType.instance
 

@@ -33,6 +33,12 @@ module Fun
   end
 end
 
+class ValidatingPost < Post
+  include ActiveModel::Validations
+
+  validates :title, presence: true
+end
+
 class TestController < ActionController::Base
   protect_from_forgery
 
@@ -487,6 +493,14 @@ class TestController < ActionController::Base
     render partial: ActionView::Helpers::FormBuilder.new(:post, nil, view_context, {})
   end
 
+  def partial_with_form_builder_and_invalid_model
+    post = ValidatingPost.new
+
+    post.validate
+
+    render partial: ActionView::Helpers::FormBuilder.new(:post, post, view_context, {})
+  end
+
   def partial_with_form_builder_subclass
     render partial: LabellingFormBuilder.new(:post, nil, view_context, {})
   end
@@ -680,6 +694,7 @@ class RenderTest < ActionController::TestCase
     get :partial_only, to: "test#partial_only"
     get :partial_with_counter, to: "test#partial_with_counter"
     get :partial_with_form_builder, to: "test#partial_with_form_builder"
+    get :partial_with_form_builder_and_invalid_model, to: "test#partial_with_form_builder_and_invalid_model"
     get :partial_with_form_builder_subclass, to: "test#partial_with_form_builder_subclass"
     get :partial_with_hash_object, to: "test#partial_with_hash_object"
     get :partial_with_locals, to: "test#partial_with_locals"
@@ -1059,24 +1074,24 @@ class RenderTest < ActionController::TestCase
 
   def test_should_render_formatted_template
     get :formatted_html_erb
-    assert_equal "formatted html erb", @response.body
+    assert_equal "formatted HTML erb", @response.body
   end
 
   def test_should_render_formatted_html_erb_template
     get :formatted_xml_erb
-    assert_equal "<test>passed formatted html erb</test>", @response.body
+    assert_equal "<test>passed formatted HTML erb</test>", @response.body
   end
 
   def test_should_render_formatted_html_erb_template_with_bad_accepts_header
     @request.env["HTTP_ACCEPT"] = "; a=dsf"
     get :formatted_xml_erb
-    assert_equal "<test>passed formatted html erb</test>", @response.body
+    assert_equal "<test>passed formatted HTML erb</test>", @response.body
   end
 
   def test_should_render_formatted_html_erb_template_with_faulty_accepts_header
     @request.accept = "image/gif, image/x-xbitmap, image/jpeg, image/pjpeg, application/x-shockwave-flash, */*"
     get :formatted_xml_erb
-    assert_equal "<test>passed formatted html erb</test>", @response.body
+    assert_equal "<test>passed formatted HTML erb</test>", @response.body
   end
 
   def test_layout_test_with_different_layout
@@ -1262,7 +1277,7 @@ class RenderTest < ActionController::TestCase
     get :render_to_string_with_template_and_html_partial
     assert_equal "**only partial**\n", @controller.instance_variable_get(:@text)
     assert_equal "<strong>only partial</strong>\n", @controller.instance_variable_get(:@html)
-    assert_equal "<strong>only html partial</strong>\n", @response.body
+    assert_equal "<strong>only HTML partial</strong>\n", @response.body
     assert_equal "text/html", @response.media_type
   end
 
@@ -1275,7 +1290,7 @@ class RenderTest < ActionController::TestCase
 
   def test_render_template_within_a_template_with_other_format
     get :render_template_within_a_template_with_other_format
-    expected = "only html partial<p>This is grand!</p>"
+    expected = "only HTML partial<p>This is grand!</p>"
     assert_equal expected, @response.body.strip
     assert_equal "text/html", @response.media_type
   end
@@ -1298,6 +1313,44 @@ class RenderTest < ActionController::TestCase
   def test_partial_with_form_builder
     get :partial_with_form_builder
     assert_equal "<label for=\"post_title\">Title</label>\n", @response.body
+  end
+
+  def test_partial_with_form_builder_and_invalid_model
+    get :partial_with_form_builder_and_invalid_model
+
+    assert_equal <<~HTML.strip, @response.body.strip
+      <div class="field_with_errors"><label for="post_title">Title</label></div>
+    HTML
+  end
+
+  def test_partial_with_form_builder_and_invalid_model_custom_field_error_proc
+    old_proc = ActionView::Base.field_error_proc
+    ActionView::Base.field_error_proc = proc { |html| tag.div html, class: "errors" }
+
+    get :partial_with_form_builder_and_invalid_model
+
+    assert_equal <<~HTML.strip, @response.body.strip
+      <div class="errors"><label for="post_title">Title</label></div>
+    HTML
+  ensure
+    ActionView::Base.field_error_proc = old_proc if old_proc
+  end
+
+  def test_partial_with_form_builder_and_invalid_model_custom_rendering_field_error_proc
+    old_proc = ActionView::Base.field_error_proc
+    ActionView::Base.field_error_proc = proc do |html_tag, instance|
+      render inline: <<~ERB, locals: { html_tag: html_tag, instance: instance }
+        <div class="field_with_errors"><%= html_tag %> <span class="error"><%= [instance.error_message].join(', ') %></span></div>
+      ERB
+    end
+
+    get :partial_with_form_builder_and_invalid_model
+
+    assert_equal <<~HTML.strip, @response.body.strip
+      <div class="field_with_errors"><label for="post_title">Title</label> <span class="error">can&#39;t be blank</span></div>
+    HTML
+  ensure
+    ActionView::Base.field_error_proc = old_proc if old_proc
   end
 
   def test_partial_with_form_builder_subclass

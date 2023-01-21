@@ -40,12 +40,12 @@ class ApiAppGeneratorTest < Rails::Generators::TestCase
     end
 
     assert_file "Gemfile" do |content|
-      assert_no_match(/gem 'sass-rails'/, content)
-      assert_no_match(/gem 'web-console'/, content)
-      assert_no_match(/gem 'capybara'/, content)
-      assert_no_match(/gem 'selenium-webdriver'/, content)
-      assert_match(/# gem 'jbuilder'/, content)
-      assert_match(/# gem 'rack-cors'/, content)
+      assert_no_match(/gem "sass-rails"/, content)
+      assert_no_match(/gem "web-console"/, content)
+      assert_no_match(/gem "capybara"/, content)
+      assert_no_match(/gem "selenium-webdriver"/, content)
+      assert_match(/# gem "jbuilder"/, content)
+      assert_match(/# gem "rack-cors"/, content)
     end
 
     assert_file "config/application.rb", /config\.api_only = true/
@@ -59,13 +59,21 @@ class ApiAppGeneratorTest < Rails::Generators::TestCase
     end
   end
 
+  def test_dockerfile
+    run_generator
+
+    assert_file "Dockerfile" do |content|
+      assert_no_match(/assets:precompile/, content)
+    end
+  end
+
   def test_generator_if_skip_action_cable_is_given
     run_generator [destination_root, "--api", "--skip-action-cable"]
     assert_file "config/application.rb", /#\s+require\s+["']action_cable\/engine["']/
     assert_no_file "config/cable.yml"
     assert_no_file "app/channels"
     assert_file "Gemfile" do |content|
-      assert_no_match(/redis/, content)
+      assert_no_match(/"redis"/, content)
     end
   end
 
@@ -93,7 +101,6 @@ class ApiAppGeneratorTest < Rails::Generators::TestCase
       { api: true, update: true }, { destination_root: destination_root, shell: @shell }
     quietly { generator.update_config_files }
 
-    assert_no_file "config/initializers/cookies_serializer.rb"
     assert_no_file "config/initializers/assets.rb"
     assert_no_file "config/initializers/content_security_policy.rb"
     assert_no_file "config/initializers/permissions_policy.rb"
@@ -105,17 +112,17 @@ class ApiAppGeneratorTest < Rails::Generators::TestCase
     generator = Rails::Generators::AppGenerator.new ["rails"],
       { api: true, update: true }, { destination_root: destination_root, shell: @shell }
     quietly { generator.update_bin_files }
-
-    assert_no_file "bin/yarn"
   end
 
   private
     def default_files
       %w(.gitignore
         .ruby-version
+        .dockerignore
         README.md
         Gemfile
         Rakefile
+        Dockerfile
         config.ru
         app/channels
         app/controllers
@@ -124,6 +131,7 @@ class ApiAppGeneratorTest < Rails::Generators::TestCase
         app/views/layouts
         app/views/layouts/mailer.html.erb
         app/views/layouts/mailer.text.erb
+        bin/docker-entrypoint
         bin/rails
         bin/rake
         bin/setup
@@ -136,19 +144,14 @@ class ApiAppGeneratorTest < Rails::Generators::TestCase
         config/environments/production.rb
         config/environments/test.rb
         config/initializers
-        config/initializers/application_controller_renderer.rb
-        config/initializers/backtrace_silencers.rb
         config/initializers/cors.rb
         config/initializers/filter_parameter_logging.rb
         config/initializers/inflections.rb
-        config/initializers/mime_types.rb
-        config/initializers/wrap_parameters.rb
         config/locales
         config/locales/en.yml
         config/puma.rb
         config/routes.rb
         config/credentials.yml.enc
-        config/spring.rb
         config/storage.yml
         db
         db/seeds.rb
@@ -170,7 +173,6 @@ class ApiAppGeneratorTest < Rails::Generators::TestCase
          app/views/layouts/application.html.erb
          bin/yarn
          config/initializers/assets.rb
-         config/initializers/cookies_serializer.rb
          config/initializers/content_security_policy.rb
          config/initializers/permissions_policy.rb
          lib/assets
@@ -182,7 +184,6 @@ class ApiAppGeneratorTest < Rails::Generators::TestCase
          public/apple-touch-icon-precomposed.png
          public/apple-touch-icon.png
          public/favicon.ico
-         package.json
       )
     end
 end

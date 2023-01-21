@@ -8,7 +8,7 @@ class SanitizeHelperTest < ActionView::TestCase
   tests ActionView::Helpers::SanitizeHelper
 
   def test_strip_links
-    assert_equal "Dont touch me", strip_links("Dont touch me")
+    assert_equal "Don't touch me", strip_links("Don't touch me")
     assert_equal "on my mind\nall day long", strip_links("<a href='almost'>on my mind</a>\n<A href='almost'>all day long</A>")
     assert_equal "Magic", strip_links("<a href='http://www.rubyonrails.com/'>Mag<a href='http://www.ruby-lang.org/'>ic")
     assert_equal "My mind\nall <b>day</b> long", strip_links("<a href='almost'>My mind</a>\n<A href='almost'>all <b>day</b> long</A>")
@@ -26,7 +26,7 @@ class SanitizeHelperTest < ActionView::TestCase
   end
 
   def test_strip_tags
-    assert_equal("Dont touch me", strip_tags("Dont touch me"))
+    assert_equal("Don't touch me", strip_tags("Don't touch me"))
     assert_equal("This is a test.", strip_tags("<p>This <u>is<u> a <a href='test.html'><strong>test</strong></a>.</p>"))
     assert_equal "This has a  here.", strip_tags("This has a <!-- comment --> here.")
     assert_equal("Jekyll &amp; Hyde", strip_tags("Jekyll & Hyde"))
@@ -35,6 +35,12 @@ class SanitizeHelperTest < ActionView::TestCase
 
   def test_strip_tags_will_not_encode_special_characters
     assert_equal "test\r\n\r\ntest", strip_tags("test\r\n\r\ntest")
+  end
+
+  def test_strip_tags_is_marked_safe
+    frag = "<div>&lt;<span>script</span>&gt;xss();&lt;<span>/script</span>&gt;</div>"
+    assert_equal("&lt;script&gt;xss();&lt;/script&gt;", strip_tags(frag)) # this string is safe for use as pcdata in html
+    assert_predicate(strip_tags(frag), :html_safe?)
   end
 
   def test_sanitize_is_marked_safe

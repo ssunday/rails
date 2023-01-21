@@ -4,7 +4,7 @@ require "active_support/core_ext/string/output_safety"
 
 module ActionView
   # = Action View Capture Helper
-  module Helpers #:nodoc:
+  module Helpers # :nodoc:
     # CaptureHelper exposes methods to let you extract generated markup which
     # can be used in other parts of a template or layout file.
     #
@@ -43,8 +43,14 @@ module ActionView
       def capture(*args)
         value = nil
         buffer = with_output_buffer { value = yield(*args) }
-        if (string = buffer.presence || value) && string.is_a?(String)
-          ERB::Util.html_escape string
+
+        case string = buffer.presence || value
+        when OutputBuffer
+          string.to_s
+        when ActiveSupport::SafeBuffer
+          string
+        when String
+          ERB::Util.html_escape(string)
         end
       end
 
@@ -121,7 +127,7 @@ module ActionView
       #     <li><%= link_to 'Home', action: 'index' %></li>
       #   <% end %>
       #
-      #  And in another place:
+      # And in another place:
       #
       #   <% content_for :navigation do %>
       #     <li><%= link_to 'Login', action: 'login' %></li>
@@ -137,7 +143,7 @@ module ActionView
       #     <li><%= link_to 'Home', action: 'index' %></li>
       #   <% end %>
       #
-      #   <%#  Add some other content, or use a different template: %>
+      #   <%# Add some other content, or use a different template: %>
       #
       #   <% content_for :navigation, flush: true do %>
       #     <li><%= link_to 'Login', action: 'login' %></li>
@@ -198,7 +204,7 @@ module ActionView
 
       # Use an alternate output buffer for the duration of the block.
       # Defaults to a new empty string.
-      def with_output_buffer(buf = nil) #:nodoc:
+      def with_output_buffer(buf = nil) # :nodoc:
         unless buf
           buf = ActionView::OutputBuffer.new
           if output_buffer && output_buffer.respond_to?(:encoding)

@@ -32,8 +32,8 @@ module ActiveRecord
     # The association of <tt>blog.posts</tt> has the object +blog+ as its
     # <tt>owner</tt>, the collection of its posts as <tt>target</tt>, and
     # the <tt>reflection</tt> object represents a <tt>:has_many</tt> macro.
-    class Association #:nodoc:
-      attr_reader :owner, :target, :reflection
+    class Association # :nodoc:
+      attr_reader :owner, :target, :reflection, :disable_joins
 
       delegate :options, to: :reflection
 
@@ -41,9 +41,12 @@ module ActiveRecord
         reflection.check_validity!
 
         @owner, @reflection = owner, reflection
+        @disable_joins = @reflection.options[:disable_joins] || false
 
         reset
         reset_scope
+
+        @skip_strict_loading = nil
       end
 
       # Resets the \loaded flag to +false+ and sets the \target to +nil+.
@@ -51,7 +54,6 @@ module ActiveRecord
         @loaded = false
         @target = nil
         @stale_state = nil
-        @inversed = false
       end
 
       def reset_negative_cache # :nodoc:
@@ -77,7 +79,6 @@ module ActiveRecord
       def loaded!
         @loaded = true
         @stale_state = stale_state
-        @inversed = false
       end
 
       # The target is stale if the target no longer points to the record(s) that the
@@ -87,7 +88,7 @@ module ActiveRecord
       #
       # Note that if the target has not been loaded, it is not considered stale.
       def stale_target?
-        !@inversed && loaded? && @stale_state != stale_state
+        loaded? && @stale_state != stale_state
       end
 
       # Sets the target of this association to <tt>\target</tt>, and the \loaded flag to +true+.
@@ -97,8 +98,12 @@ module ActiveRecord
       end
 
       def scope
-        if (scope = klass.current_scope) && scope.try(:proxy_association) == self
+        if disable_joins
+          DisableJoinsAssociationScope.create.scope(self)
+        elsif (scope = klass.current_scope) && scope.try(:proxy_association) == self
           scope.spawn
+        elsif scope = klass.global_current_scope
+          target_scope.merge!(association_scope).merge!(scope)
         else
           target_scope.merge!(association_scope)
         end
@@ -132,15 +137,11 @@ module ActiveRecord
 
       def inversed_from(record)
         self.target = record
-        @inversed = !!record
       end
 
       def inversed_from_queries(record)
         if inversable?(record)
           self.target = record
-          @inversed = true
-        else
-          @inversed = false
         end
       end
 
@@ -191,7 +192,7 @@ module ActiveRecord
         @reflection = @owner.class._reflect_on_association(reflection_name)
       end
 
-      def initialize_attributes(record, except_from_scope_attributes = nil) #:nodoc:
+      def initialize_attributes(record, except_from_scope_attributes = nil) # :nodoc:
         except_from_scope_attributes ||= {}
         skip_assign = [reflection.foreign_key, reflection.type].compact
         assigned_keys = record.changed_attribute_names_to_save
@@ -210,13 +211,15 @@ module ActiveRecord
       end
 
       private
-        def find_target
-          if owner.strict_loading? && owner.validation_context.nil?
-            Base.strict_loading_violation!(owner: owner.class, association: klass)
-          end
+        # Reader and writer methods call this so that consistent errors are presented
+        # when the association target class does not exist.
+        def ensure_klass_exists!
+          klass
+        end
 
-          if reflection.strict_loading? && owner.validation_context.nil?
-            Base.strict_loading_violation!(owner: owner.class, association: reflection.name)
+        def find_target
+          if violates_strict_loading?
+            Base.strict_loading_violation!(owner: owner.class, reflection: reflection)
           end
 
           scope = self.scope
@@ -228,7 +231,32 @@ module ActiveRecord
           end
 
           binds = AssociationScope.get_bind_values(owner, reflection.chain)
-          sc.execute(binds, klass.connection) { |record| set_inverse_instance(record) }
+          sc.execute(binds, klass.connection) do |record|
+            set_inverse_instance(record)
+            if owner.strict_loading_n_plus_one_only? && reflection.macro == :has_many
+              record.strict_loading!
+            else
+              record.strict_loading!(false, mode: owner.strict_loading_mode)
+            end
+          end
+        end
+
+        def skip_strict_loading(&block)
+          skip_strict_loading_was = @skip_strict_loading
+          @skip_strict_loading = true
+          yield
+        ensure
+          @skip_strict_loading = skip_strict_loading_was
+        end
+
+        def violates_strict_loading?
+          return if @skip_strict_loading
+
+          return unless owner.validation_context.nil?
+
+          return reflection.strict_loading? if reflection.options.key?(:strict_loading)
+
+          owner.strict_loading? && !owner.strict_loading_n_plus_one_only?
         end
 
         # The scope for this association.
@@ -239,7 +267,11 @@ module ActiveRecord
         # actually gets built.
         def association_scope
           if klass
-            @association_scope ||= AssociationScope.scope(self)
+            @association_scope ||= if disable_joins
+              DisableJoinsAssociationScope.scope(self)
+            else
+              AssociationScope.scope(self)
+            end
           end
         end
 
@@ -271,7 +303,7 @@ module ActiveRecord
 
         # Raises ActiveRecord::AssociationTypeMismatch unless +record+ is of
         # the kind of the class of the associated objects. Meant to be used as
-        # a sanity check when you are about to assign an associated record.
+        # a safety check when you are about to assign an associated record.
         def raise_on_type_mismatch!(record)
           unless record.is_a?(reflection.klass)
             fresh_class = reflection.class_name.safe_constantize
@@ -331,7 +363,11 @@ module ActiveRecord
         end
 
         def enqueue_destroy_association(options)
-          owner.class.destroy_association_async_job&.perform_later(**options)
+          job_class = owner.class.destroy_association_async_job
+
+          if job_class
+            owner._after_commit_jobs.push([job_class, options])
+          end
         end
 
         def inversable?(record)

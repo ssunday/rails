@@ -83,14 +83,14 @@ class ControllerClassTests < ActiveSupport::TestCase
     record.save
 
     dom_id = nil
-    assert_not_deprecated do
+    assert_not_deprecated(ActionController.deprecator) do
       dom_id = RecordIdentifierIncludedController.new.dom_id(record)
     end
 
     assert_equal "comment_1", dom_id
 
     dom_class = nil
-    assert_not_deprecated do
+    assert_not_deprecated(ActionController.deprecator) do
       dom_class = RecordIdentifierIncludedController.new.dom_class(record)
     end
     assert_equal "comment", dom_class
@@ -133,7 +133,7 @@ class ControllerInstanceTests < ActiveSupport::TestCase
     ActionDispatch::Response.default_headers = {
       "X-Frame-Options" => "DENY",
       "X-Content-Type-Options" => "nosniff",
-      "X-XSS-Protection" => "1;"
+      "X-XSS-Protection" => "0"
     }
 
     response_headers = SimpleController.action("hello").call(
@@ -172,12 +172,14 @@ class PerformActionTest < ActionController::TestCase
     assert_equal "The action 'non_existent' could not be found for EmptyController", exception.message
   end
 
-  if defined?(DidYouMean) && DidYouMean.respond_to?(:correct_error)
-    def test_exceptions_have_suggestions_for_fix
-      use_controller SimpleController
-      exception = assert_raise AbstractController::ActionNotFound do
-        get :non_existent
-      end
+  def test_exceptions_have_suggestions_for_fix
+    use_controller SimpleController
+    exception = assert_raise AbstractController::ActionNotFound do
+      get :ello
+    end
+    if exception.respond_to?(:detailed_message)
+      assert_match "Did you mean?", exception.detailed_message
+    else
       assert_match "Did you mean?", exception.message
     end
   end
@@ -218,7 +220,7 @@ class UrlOptionsTest < ActionController::TestCase
       set.draw do
         get "from_view", to: "url_options#from_view", as: :from_view
 
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get ":controller/:action"
         end
       end
@@ -255,7 +257,7 @@ class DefaultUrlOptionsTest < ActionController::TestCase
       set.draw do
         get "from_view", to: "default_url_options#from_view", as: :from_view
 
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get ":controller/:action"
         end
       end
@@ -275,7 +277,7 @@ class DefaultUrlOptionsTest < ActionController::TestCase
           resources :descriptions
         end
 
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get ":controller/:action"
         end
       end

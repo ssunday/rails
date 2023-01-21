@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require "active_support/core_ext/symbol/starts_ends_with"
+require "active_support/html_safe_translation"
 
 module AbstractController
   module Translation
@@ -15,7 +15,7 @@ module AbstractController
     # to translate many keys within the same controller / action and gives you a
     # simple framework for scoping them consistently.
     def translate(key, **options)
-      if key.start_with?(".")
+      if key&.start_with?(".")
         path = controller_path.tr("/", ".")
         defaults = [:"#{path}#{key}"]
         defaults << options[:default] if options[:default]
@@ -24,7 +24,8 @@ module AbstractController
       end
 
       i18n_raise = options.fetch(:raise, self.raise_on_missing_translations)
-      I18n.translate(key, **options, raise: i18n_raise)
+
+      ActiveSupport::HtmlSafeTranslation.translate(key, **options, raise: i18n_raise)
     end
     alias :t :translate
 

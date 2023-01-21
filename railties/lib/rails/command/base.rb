@@ -3,6 +3,8 @@
 require "thor"
 require "erb"
 
+require "active_support/core_ext/class/attribute"
+require "active_support/core_ext/module/delegation"
 require "active_support/core_ext/string/filters"
 require "active_support/core_ext/string/inflections"
 
@@ -14,7 +16,27 @@ module Rails
       class Error < Thor::Error # :nodoc:
       end
 
+      class CorrectableError < Error # :nodoc:
+        attr_reader :key, :options
+
+        def initialize(message, key, options)
+          @key     = key
+          @options = options
+          super(message)
+        end
+
+        if defined?(DidYouMean::SpellChecker) && defined?(DidYouMean::Correctable)
+          include DidYouMean::Correctable
+
+          def corrections
+            @corrections ||= DidYouMean::SpellChecker.new(dictionary: options).correct(key)
+          end
+        end
+      end
+
       include Actions
+
+      class_attribute :bin, instance_accessor: false, default: "bin/rails"
 
       class << self
         def exit_on_failure? # :nodoc:
@@ -32,7 +54,7 @@ module Rails
           if usage
             super
           else
-            @desc ||= ERB.new(File.read(usage_path)).result(binding) if usage_path
+            @desc ||= ERB.new(File.read(usage_path), trim_mode: "-").result(binding) if usage_path
           end
         end
 
@@ -53,7 +75,7 @@ module Rails
           Rails::Command.hidden_commands << self
         end
 
-        def inherited(base) #:nodoc:
+        def inherited(base) # :nodoc:
           super
 
           if base.name && !base.name.end_with?("Base")
@@ -70,11 +92,19 @@ module Rails
         end
 
         def printing_commands
-          namespaced_commands
+          commands.filter_map do |key, command|
+            next if command.hidden?
+            if command_root_namespace.match?(/(\A|:)#{key}\z/)
+              [command_root_namespace, command.description]
+            else
+              ["#{command_root_namespace}:#{key}", command.description]
+            end
+          end
         end
 
-        def executable
-          "rails #{command_name}"
+
+        def executable(subcommand = nil)
+          "#{bin} #{command_name}#{":" if subcommand}#{subcommand}"
         end
 
         # Use Rails' default banner.
@@ -86,10 +116,8 @@ module Rails
         #
         #   Rails::Command::TestCommand.base_name # => 'rails'
         def base_name
-          @base_name ||= begin
-            if base = name.to_s.split("::").first
-              base.underscore
-            end
+          @base_name ||= if base = name.to_s.split("::").first
+            base.underscore
           end
         end
 
@@ -97,11 +125,9 @@ module Rails
         #
         #   Rails::Command::TestCommand.command_name # => 'test'
         def command_name
-          @command_name ||= begin
-            if command = name.to_s.split("::").last
-              command.chomp!("Command")
-              command.underscore
-            end
+          @command_name ||= if command = name.to_s.split("::").last
+            command.chomp!("Command")
+            command.underscore
           end
         end
 
@@ -145,16 +171,19 @@ module Rails
           def relative_command_path
             File.join("../commands", *command_root_namespace.split(":"))
           end
+      end
 
-          def namespaced_commands
-            commands.keys.map do |key|
-              if command_root_namespace.match?(/(\A|:)#{key}\z/)
-                command_root_namespace
-              else
-                "#{command_root_namespace}:#{key}"
-              end
-            end
-          end
+      no_commands do
+        delegate :executable, to: :class
+        attr_reader :current_subcommand
+
+        def invoke_command(command, *) # :nodoc:
+          @current_subcommand ||= nil
+          original_subcommand, @current_subcommand = @current_subcommand, command.name
+          super
+        ensure
+          @current_subcommand = original_subcommand
+        end
       end
 
       def help

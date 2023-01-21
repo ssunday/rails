@@ -460,44 +460,44 @@ class DirtyTest < ActiveRecord::TestCase
 
   def test_save_should_store_serialized_attributes_even_with_partial_writes
     with_partial_writes(Topic) do
-      topic = Topic.create!(content: { a: "a" })
+      topic = Topic.create!(content: { "a" => "a" })
 
       assert_not_predicate topic, :changed?
 
-      topic.content[:b] = "b"
+      topic.content["b"] = "b"
 
       assert_predicate topic, :changed?
 
       topic.save!
 
       assert_not_predicate topic, :changed?
-      assert_equal "b", topic.content[:b]
+      assert_equal "b", topic.content["b"]
 
       topic.reload
 
-      assert_equal "b", topic.content[:b]
+      assert_equal "b", topic.content["b"]
     end
   end
 
   def test_save_always_should_update_timestamps_when_serialized_attributes_are_present
     with_partial_writes(Topic) do
-      topic = Topic.create!(content: { a: "a" })
+      topic = Topic.create!(content: { "a" => "a" })
       topic.save!
 
       updated_at = topic.updated_at
       travel(1.second) do
-        topic.content[:hello] = "world"
+        topic.content["hello"] = "world"
         topic.save!
       end
 
       assert_not_equal updated_at, topic.updated_at
-      assert_equal "world", topic.content[:hello]
+      assert_equal "world", topic.content["hello"]
     end
   end
 
   def test_save_should_not_save_serialized_attribute_with_partial_writes_if_not_present
     with_partial_writes(Topic) do
-      topic = Topic.create!(author_name: "Bill", content: { a: "a" })
+      topic = Topic.create!(author_name: "Bill", content: { "a" => "a" })
       topic = Topic.select("id, author_name").find(topic.id)
       topic.update_columns author_name: "John"
       assert_not_nil topic.reload.content
@@ -505,11 +505,11 @@ class DirtyTest < ActiveRecord::TestCase
   end
 
   def test_changes_to_save_should_not_mutate_array_of_hashes
-    topic = Topic.new(author_name: "Bill", content: [{ a: "a" }])
+    topic = Topic.new(author_name: "Bill", content: [{ "a" => "a" }])
 
     topic.changes_to_save
 
-    assert_equal [{ a: "a" }], topic.content
+    assert_equal [{ "a" => "a" }], topic.content
   end
 
   def test_previous_changes
@@ -941,13 +941,56 @@ class DirtyTest < ActiveRecord::TestCase
     assert_not_predicate person, :changed?
   end
 
+  test "partial insert off with unchanged default function attribute" do
+    with_partial_writes Aircraft, false do
+      aircraft = Aircraft.new(name: "Boeing")
+      assert_equal "Boeing", aircraft.name
+
+      aircraft.save!
+      expected_manufactured_at = Time.now
+      aircraft.reload
+
+      assert_equal "Boeing", aircraft.name
+      assert_in_delta expected_manufactured_at, aircraft.manufactured_at, 1
+    end
+  end
+
+  test "partial insert off with changed default function attribute" do
+    with_partial_writes Aircraft, false do
+      manufactured_at = 1.years.ago
+      aircraft = Aircraft.new(name: "Boeing2", manufactured_at: manufactured_at)
+
+      assert_equal "Boeing2", aircraft.name
+      assert_equal manufactured_at.to_i, aircraft.manufactured_at.to_i
+
+      aircraft.save!
+      aircraft.reload
+
+      assert_equal "Boeing2", aircraft.name
+      assert_equal manufactured_at.utc.strftime("%Y-%m-%d %H:%M:%S"), aircraft.manufactured_at.strftime("%Y-%m-%d %H:%M:%S")
+    end
+  end
+
+  test "attribute_changed? properly type casts enum values" do
+    parrot = LiveParrot.create!(name: "Scipio", breed: :african)
+
+    parrot.breed = :australian
+
+    assert parrot.breed_changed?(from: "african", to: "australian")
+    assert parrot.breed_changed?(from: :african, to: :australian)
+    assert parrot.breed_changed?(from: 0, to: 1)
+  end
+
   private
     def with_partial_writes(klass, on = true)
-      old = klass.partial_writes?
-      klass.partial_writes = on
+      old_inserts = klass.partial_inserts?
+      old_updates = klass.partial_updates?
+      klass.partial_inserts = on
+      klass.partial_updates = on
       yield
     ensure
-      klass.partial_writes = old
+      klass.partial_inserts = old_inserts
+      klass.partial_updates = old_updates
     end
 
     def check_pirate_after_save_failure(pirate)

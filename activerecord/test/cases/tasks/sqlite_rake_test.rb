@@ -4,9 +4,9 @@ require "cases/helper"
 require "active_record/tasks/database_tasks"
 require "pathname"
 
-if current_adapter?(:SQLite3Adapter)
-  module ActiveRecord
-    class SqliteDBCreateTest < ActiveRecord::TestCase
+module ActiveRecord
+  class SqliteDBCreateTest < ActiveRecord::TestCase
+    if current_adapter?(:SQLite3Adapter)
       def setup
         @database      = "db_create.sqlite3"
         @configuration = {
@@ -72,15 +72,17 @@ if current_adapter?(:SQLite3Adapter)
 
     class SqliteDBDropTest < ActiveRecord::TestCase
       def setup
+        @root          = "/rails/root"
         @database      = "db_create.sqlite3"
+        @database_root = File.join(@root, @database)
         @configuration = {
           "adapter"  => "sqlite3",
           "database" => @database
         }
-        @path = Class.new do
-          def to_s; "/absolute/path" end
-          def absolute?; true end
-        end.new
+        @configuration_root = {
+          "adapter"  => "sqlite3",
+          "database" => @database_root
+        }
 
         $stdout, @original_stdout = StringIO.new, $stdout
         $stderr, @original_stderr = StringIO.new, $stderr
@@ -90,45 +92,33 @@ if current_adapter?(:SQLite3Adapter)
         $stdout, $stderr = @original_stdout, @original_stderr
       end
 
-      def test_creates_path_from_database
-        assert_called_with(Pathname, :new, [@database], returns: @path) do
-          ActiveRecord::Tasks::DatabaseTasks.drop @configuration, "/rails/root"
+      def test_checks_db_dir_is_absolute
+        assert_called_with(File, :absolute_path?, [@database], returns: false) do
+          ActiveRecord::Tasks::DatabaseTasks.drop @configuration, @root
         end
       end
 
       def test_removes_file_with_absolute_path
-        Pathname.stub(:new, @path) do
-          assert_called_with(FileUtils, :rm, ["/absolute/path"]) do
-            ActiveRecord::Tasks::DatabaseTasks.drop @configuration, "/rails/root"
-          end
+        assert_called_with(FileUtils, :rm, [@database_root]) do
+          ActiveRecord::Tasks::DatabaseTasks.drop @configuration_root, @root
         end
       end
 
       def test_generates_absolute_path_with_given_root
-        Pathname.stub(:new, @path) do
-          @path.stub(:absolute?, false) do
-            assert_called_with(File, :join, ["/rails/root", @path],
-              returns: "/former/relative/path"
-            ) do
-              ActiveRecord::Tasks::DatabaseTasks.drop @configuration, "/rails/root"
-            end
-          end
+        assert_called_with(File, :join, [@root, @database], returns: "#{@root}/#{@database}") do
+          ActiveRecord::Tasks::DatabaseTasks.drop @configuration, @root
         end
       end
 
       def test_removes_file_with_relative_path
-        File.stub(:join, "/former/relative/path") do
-          @path.stub(:absolute?, false) do
-            assert_called_with(FileUtils, :rm, ["/former/relative/path"]) do
-              ActiveRecord::Tasks::DatabaseTasks.drop @configuration, "/rails/root"
-            end
-          end
+        assert_called_with(FileUtils, :rm, [@database_root]) do
+          ActiveRecord::Tasks::DatabaseTasks.drop @configuration, @root
         end
       end
 
       def test_when_db_dropped_successfully_outputs_info_to_stdout
         FileUtils.stub(:rm, nil) do
-          ActiveRecord::Tasks::DatabaseTasks.drop @configuration, "/rails/root"
+          ActiveRecord::Tasks::DatabaseTasks.drop @configuration, @root
 
           assert_equal "Dropped database '#{@database}'\n", $stdout.string
         end
@@ -199,13 +189,17 @@ if current_adapter?(:SQLite3Adapter)
       def test_structure_dump_with_ignore_tables
         dbfile   = @database
         filename = "awesome-file.sql"
-        assert_called(ActiveRecord::SchemaDumper, :ignore_tables, returns: ["foo"]) do
-          ActiveRecord::Tasks::DatabaseTasks.structure_dump(@configuration, filename, "/rails/root")
+        ActiveRecord::Base.connection.stub(:data_sources, ["foo", "bar", "prefix_foo", "ignored_foo"]) do
+          ActiveRecord::SchemaDumper.stub(:ignore_tables, [/^prefix_/, "ignored_foo"]) do
+            ActiveRecord::Tasks::DatabaseTasks.structure_dump(@configuration, filename, "/rails/root")
+          end
         end
         assert File.exist?(dbfile)
         assert File.exist?(filename)
-        assert_match(/bar/, File.read(filename))
-        assert_no_match(/foo/, File.read(filename))
+        contents = File.read(filename)
+        assert_match(/bar/, contents)
+        assert_no_match(/prefix_foo/, contents)
+        assert_no_match(/ignored_foo/, contents)
       ensure
         FileUtils.rm_f(filename)
         FileUtils.rm_f(dbfile)
@@ -217,8 +211,9 @@ if current_adapter?(:SQLite3Adapter)
         assert_called_with(
           Kernel,
           :system,
-          ["sqlite3", "--noop", "db_create.sqlite3", ".schema", out: "awesome-file.sql"],
-          returns: nil
+          ["sqlite3", "--noop", "db_create.sqlite3", ".schema"],
+          returns: nil,
+          out: "awesome-file.sql"
         ) do
           e = assert_raise(RuntimeError) do
             with_structure_dump_flags(["--noop"]) do

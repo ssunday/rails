@@ -3,8 +3,8 @@
 require "active_support/core_ext/module/attribute_accessors"
 
 module ActionView
-  class Template #:nodoc:
-    class Types
+  class Template # :nodoc:
+    module Types
       class Type
         SET = Struct.new(:symbols).new([ :html, :text, :js, :css, :xml, :json ])
 
@@ -37,21 +37,20 @@ module ActionView
         end
       end
 
-      cattr_accessor :type_klass
+      class << self
+        attr_reader :symbols
 
-      def self.delegate_to(klass)
-        self.type_klass = klass
+        def delegate_to(klass)
+          @symbols = klass::SET.symbols
+          @type_klass = klass
+        end
+
+        def [](type)
+          @type_klass[type]
+        end
       end
 
       delegate_to Type
-
-      def self.[](type)
-        type_klass[type]
-      end
-
-      def self.symbols
-        type_klass::SET.symbols
-      end
     end
   end
 end

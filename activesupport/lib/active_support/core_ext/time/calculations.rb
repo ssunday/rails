@@ -42,8 +42,8 @@ class Time
 
     # Layers additional behavior on Time.at so that ActiveSupport::TimeWithZone and DateTime
     # instances can be used when called with a single argument
-    def at_with_coercion(*args)
-      return at_without_coercion(*args) if args.size != 1
+    def at_with_coercion(*args, **kwargs)
+      return at_without_coercion(*args, **kwargs) if args.size != 1 || !kwargs.empty?
 
       # Time.at can be called with a time or numerical value
       time_or_number = args.first
@@ -126,8 +126,8 @@ class Time
   # Returns a new Time where one or more of the elements have been changed according
   # to the +options+ parameter. The time options (<tt>:hour</tt>, <tt>:min</tt>,
   # <tt>:sec</tt>, <tt>:usec</tt>, <tt>:nsec</tt>) reset cascadingly, so if only
-  # the hour is passed, then minute, sec, usec and nsec is set to 0. If the hour
-  # and minute is passed, then sec, usec and nsec is set to 0. The +options+ parameter
+  # the hour is passed, then minute, sec, usec, and nsec is set to 0. If the hour
+  # and minute is passed, then sec, usec, and nsec is set to 0. The +options+ parameter
   # takes a hash with any of these keys: <tt>:year</tt>, <tt>:month</tt>, <tt>:day</tt>,
   # <tt>:hour</tt>, <tt>:min</tt>, <tt>:sec</tt>, <tt>:usec</tt>, <tt>:nsec</tt>,
   # <tt>:offset</tt>. Pass either <tt>:usec</tt> or <tt>:nsec</tt>, not both.
@@ -159,8 +159,26 @@ class Time
       ::Time.new(new_year, new_month, new_day, new_hour, new_min, new_sec, new_offset)
     elsif utc?
       ::Time.utc(new_year, new_month, new_day, new_hour, new_min, new_sec)
+    elsif zone&.respond_to?(:utc_to_local)
+      new_time = ::Time.new(new_year, new_month, new_day, new_hour, new_min, new_sec, zone)
+
+      # When there are two occurrences of a nominal time due to DST ending,
+      # `Time.new` chooses the first chronological occurrence (the one with a
+      # larger UTC offset). However, for `change`, we want to choose the
+      # occurrence that matches this time's UTC offset.
+      #
+      # If the new time's UTC offset is larger than this time's UTC offset, the
+      # new time might be a first chronological occurrence. So we add the offset
+      # difference to fast-forward the new time, and check if the result has the
+      # desired UTC offset (i.e. is the second chronological occurrence).
+      offset_difference = new_time.utc_offset - utc_offset
+      if offset_difference > 0 && (new_time_2 = new_time + offset_difference).utc_offset == utc_offset
+        new_time_2
+      else
+        new_time
+      end
     elsif zone
-      ::Time.local(new_year, new_month, new_day, new_hour, new_min, new_sec)
+      ::Time.local(new_sec, new_min, new_hour, new_day, new_month, new_year, nil, nil, isdst, nil)
     else
       ::Time.new(new_year, new_month, new_day, new_hour, new_min, new_sec, utc_offset)
     end
@@ -177,6 +195,10 @@ class Time
   #   Time.new(2015, 8, 1, 14, 35, 0).advance(hours: 1)   # => 2015-08-01 15:35:00 -0700
   #   Time.new(2015, 8, 1, 14, 35, 0).advance(days: 1)    # => 2015-08-02 14:35:00 -0700
   #   Time.new(2015, 8, 1, 14, 35, 0).advance(weeks: 1)   # => 2015-08-08 14:35:00 -0700
+  #
+  # Just like Date#advance, increments are applied in order of time units from
+  # largest to smallest. This order can affect the result around the end of a
+  # month.
   def advance(options)
     unless options[:weeks].nil?
       options[:weeks], partial_weeks = options[:weeks].divmod(1)
@@ -275,7 +297,7 @@ class Time
   end
   alias :at_end_of_minute :end_of_minute
 
-  def plus_with_duration(other) #:nodoc:
+  def plus_with_duration(other) # :nodoc:
     if ActiveSupport::Duration === other
       other.since(self)
     else
@@ -285,7 +307,7 @@ class Time
   alias_method :plus_without_duration, :+
   alias_method :+, :plus_with_duration
 
-  def minus_with_duration(other) #:nodoc:
+  def minus_with_duration(other) # :nodoc:
     if ActiveSupport::Duration === other
       other.until(self)
     else
@@ -303,7 +325,7 @@ class Time
     other.is_a?(DateTime) ? to_f - other.to_f : minus_without_coercion(other)
   end
   alias_method :minus_without_coercion, :-
-  alias_method :-, :minus_with_coercion
+  alias_method :-, :minus_with_coercion # rubocop:disable Lint/DuplicateMethods
 
   # Layers additional behavior on Time#<=> so that DateTime and ActiveSupport::TimeWithZone instances
   # can be chronologically compared with a Time

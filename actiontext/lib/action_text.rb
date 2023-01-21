@@ -3,6 +3,9 @@
 require "active_support"
 require "active_support/rails"
 
+require "action_text/version"
+require "action_text/deprecator"
+
 require "nokogiri"
 
 module ActionText
@@ -13,6 +16,7 @@ module ActionText
   autoload :Attachment
   autoload :Attribute
   autoload :Content
+  autoload :Encryption
   autoload :Fragment
   autoload :FixtureSet
   autoload :HtmlConversion

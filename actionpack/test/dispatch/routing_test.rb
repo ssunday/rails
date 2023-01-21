@@ -134,7 +134,7 @@ class TestRoutingMapper < ActionDispatch::IntegrationTest
     assert_raise(ArgumentError) do
       draw do
         namespace :admin do
-          ActiveSupport::Deprecation.silence do
+          ActionDispatch.deprecator.silence do
             get "/:controller(/:action(/:id(.:format)))"
           end
         end
@@ -145,7 +145,7 @@ class TestRoutingMapper < ActionDispatch::IntegrationTest
   def test_namespace_without_controller_segment
     draw do
       namespace :admin do
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get "hello/:controllers/:action"
         end
       end
@@ -452,7 +452,7 @@ class TestRoutingMapper < ActionDispatch::IntegrationTest
         get "global/export",      action: :export, as: :export_request
         get "/export/:id/:file",  action: :export, as: :export_download, constraints: { file: /.*/ }
 
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get "global/:action"
         end
       end
@@ -477,7 +477,7 @@ class TestRoutingMapper < ActionDispatch::IntegrationTest
 
   def test_local
     draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get "/local/:action", controller: "local"
       end
     end
@@ -1459,6 +1459,18 @@ class TestRoutingMapper < ActionDispatch::IntegrationTest
     assert_equal "projects#index", @response.body
   end
 
+  def test_optional_part_of_segment
+    draw do
+      get "/star-trek(-tng)/:episode", to: "star_trek#show"
+    end
+
+    get "/star-trek/02-15-the-trouble-with-tribbles"
+    assert_equal "star_trek#show", @response.body
+
+    get "/star-trek-tng/05-02-darmok"
+    assert_equal "star_trek#show", @response.body
+  end
+
   def test_scope_with_format_option
     draw do
       get "direct/index", as: :no_format_direct, format: false
@@ -1612,7 +1624,7 @@ class TestRoutingMapper < ActionDispatch::IntegrationTest
 
   def test_not_matching_shorthand_with_dynamic_parameters
     draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller/:action/admin"
       end
     end
@@ -1650,7 +1662,7 @@ class TestRoutingMapper < ActionDispatch::IntegrationTest
   def test_scoped_controller_with_namespace_and_action
     draw do
       namespace :account do
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get ":action/callback", action: /twitter|github/, controller: "callbacks", as: :callback
         end
       end
@@ -1983,7 +1995,7 @@ class TestRoutingMapper < ActionDispatch::IntegrationTest
 
   def test_url_generator_for_generic_route
     draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get "whatever/:controller(/:action(/:id))"
       end
     end
@@ -1997,7 +2009,7 @@ class TestRoutingMapper < ActionDispatch::IntegrationTest
 
   def test_url_generator_for_namespaced_generic_route
     draw do
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get "whatever/:controller(/:action(/:id))", id: /\d+/
       end
     end
@@ -3785,7 +3797,7 @@ class TestRoutingMapper < ActionDispatch::IntegrationTest
   end
 
   def test_dynamic_controller_segments_are_deprecated
-    assert_deprecated do
+    assert_deprecated(ActionDispatch.deprecator) do
       draw do
         get "/:controller", action: "index"
       end
@@ -3793,7 +3805,7 @@ class TestRoutingMapper < ActionDispatch::IntegrationTest
   end
 
   def test_dynamic_action_segments_are_deprecated
-    assert_deprecated do
+    assert_deprecated(ActionDispatch.deprecator) do
       draw do
         get "/pages/:action", controller: "pages"
       end
@@ -3902,11 +3914,7 @@ private
   def verify_redirect(url, status = 301)
     assert_equal status, @response.status
     assert_equal url, @response.headers["Location"]
-    assert_equal expected_redirect_body(url), @response.body
-  end
-
-  def expected_redirect_body(url)
-    %(<html><body>You are being <a href="#{ERB::Util.h(url)}">redirected</a>.</body></html>)
+    assert_equal "", @response.body
   end
 end
 
@@ -4329,11 +4337,7 @@ private
   def verify_redirect(url, status = 301)
     assert_equal status, @response.status
     assert_equal url, @response.headers["Location"]
-    assert_equal expected_redirect_body(url), @response.body
-  end
-
-  def expected_redirect_body(url)
-    %(<html><body>You are being <a href="#{ERB::Util.h(url)}">redirected</a>.</body></html>)
+    assert_equal "", @response.body
   end
 end
 
@@ -4393,7 +4397,7 @@ class TestOptimizedNamedRoutes < ActionDispatch::IntegrationTest
       ok = lambda { |env| [200, { "Content-Type" => "text/plain" }, []] }
       get "/foo" => ok, as: :foo
 
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get "/post(/:action(/:id))" => ok, as: :posts
       end
 
@@ -4574,7 +4578,7 @@ class TestInvalidUrls < ActionDispatch::IntegrationTest
         ok = lambda { |env| [200, { "Content-Type" => "text/plain" }, []] }
         get "/foobar/:id", to: ok
 
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get "/:controller(/:action(/:id))"
         end
       end
@@ -4794,7 +4798,7 @@ class TestRouteDefaults < ActionDispatch::IntegrationTest
 
   def test_route_options_are_required_for_url_for
     assert_raises(ActionController::UrlGenerationError) do
-      assert_equal "/posts/1", url_for(controller: "posts", action: "show", id: 1, only_path: true)
+      url_for(controller: "posts", action: "show", id: 1, only_path: true)
     end
 
     assert_equal "/posts/1", url_for(controller: "posts", action: "show", id: 1, bucket_type: "post", only_path: true)
@@ -4901,9 +4905,11 @@ class TestUrlGenerationErrors < ActionDispatch::IntegrationTest
     assert_match message, error.message
   end
 
-  if defined?(DidYouMean) && DidYouMean.respond_to?(:correct_error)
-    test "exceptions have suggestions for fix" do
-      error = assert_raises(ActionController::UrlGenerationError) { product_path(nil, "id" => "url-tested") }
+  test "exceptions have suggestions for fix" do
+    error = assert_raises(ActionController::UrlGenerationError) { product_path(nil, "id" => "url-tested") }
+    if error.respond_to?(:detailed_message)
+      assert_match "Did you mean?", error.detailed_message
+    else
       assert_match "Did you mean?", error.message
     end
   end
@@ -4914,8 +4920,8 @@ class TestUrlGenerationErrors < ActionDispatch::IntegrationTest
   # we don't want to break other code.
   test "correct for empty UrlGenerationError" do
     err = ActionController::UrlGenerationError.new("oh no!")
-    correction = ActionController::UrlGenerationError::Correction.new(err)
-    assert_equal [], correction.corrections
+
+    assert_equal [], err.corrections
   end
 end
 
@@ -4960,7 +4966,7 @@ class TestErrorsInController < ActionDispatch::IntegrationTest
 
   Routes = ActionDispatch::Routing::RouteSet.new
   Routes.draw do
-    ActiveSupport::Deprecation.silence do
+    ActionDispatch.deprecator.silence do
       get "/:controller(/:action)"
     end
   end
@@ -5103,7 +5109,7 @@ class TestPathParameters < ActionDispatch::IntegrationTest
         end
       end
 
-      ActiveSupport::Deprecation.silence do
+      ActionDispatch.deprecator.silence do
         get ":controller(/:action/(:id))"
       end
     end

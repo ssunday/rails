@@ -3,7 +3,7 @@
 require "abstract_unit"
 
 class SSLTest < ActionDispatch::IntegrationTest
-  HEADERS = Rack::Utils::HeaderHash.new "Content-Type" => "text/html"
+  HEADERS = { "Content-Type" => "text/html" }
 
   attr_accessor :app
 
@@ -66,6 +66,15 @@ class RedirectSSLTest < SSLTest
 
   test "redirect with custom status" do
     assert_redirected redirect: { status: 308 }
+  end
+
+  test "redirect with unknown request method" do
+    self.app = build_app
+
+    process :not_an_http_method, "http://a/b?c=d"
+
+    assert_response 307
+    assert_redirected_to "https://a/b?c=d"
   end
 
   test "redirect with ssl_default_redirect_status" do

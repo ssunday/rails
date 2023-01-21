@@ -10,14 +10,6 @@ module ActiveRecord
 
       fixtures :people
 
-      def setup
-        @handler = ConnectionHandler.new
-        @owner_name = "ActiveRecord::Base"
-        db_config = ActiveRecord::Base.configurations.configs_for(env_name: "arunit", name: "primary")
-        @rw_pool = @handler.establish_connection(db_config)
-        @ro_pool = @handler.establish_connection(db_config, role: :reading)
-      end
-
       def teardown
         clean_up_connection_handler
       end
@@ -29,7 +21,7 @@ module ActiveRecord
             ActiveRecord::Base.establish_connection(db_config)
             assert_nothing_raised { Person.first }
 
-            assert_equal [:default, :shard_one], ActiveRecord::Base.connection_handler.send(:owner_to_pool_manager).fetch("ActiveRecord::Base").instance_variable_get(:@name_to_role_mapping).values.flat_map(&:keys).uniq
+            assert_equal [:default, :shard_one], ActiveRecord::Base.connection_handler.send(:get_pool_manager, "ActiveRecord::Base").shard_names
           end
         end
 
@@ -231,11 +223,8 @@ module ActiveRecord
         end
 
         def test_retrieve_connection_pool_with_invalid_shard
-          assert_not_nil @handler.retrieve_connection_pool("ActiveRecord::Base")
-          assert_nil @handler.retrieve_connection_pool("ActiveRecord::Base", shard: :foo)
-
-          assert_not_nil @handler.retrieve_connection_pool("ActiveRecord::Base", role: :reading)
-          assert_nil @handler.retrieve_connection_pool("ActiveRecord::Base", role: :reading, shard: :foo)
+          assert_not_nil ActiveRecord::Base.connection_handler.retrieve_connection_pool("ActiveRecord::Base")
+          assert_nil ActiveRecord::Base.connection_handler.retrieve_connection_pool("ActiveRecord::Base", shard: :foo)
         end
 
         def test_calling_connected_to_on_a_non_existent_shard_raises
@@ -250,6 +239,59 @@ module ActiveRecord
           end
 
           assert_equal "No connection pool for 'ActiveRecord::Base' found for the 'foo' shard.", error.message
+        end
+
+        def test_cannot_swap_shards_while_prohibited
+          previous_env, ENV["RAILS_ENV"] = ENV["RAILS_ENV"], "default_env"
+
+          config = {
+            "default_env" => {
+              "primary" => { "adapter" => "sqlite3", "database" => "test/db/primary.sqlite3" },
+              "primary_shard_one" => { "adapter" => "sqlite3", "database" => "test/db/primary_shard_one.sqlite3" }
+            }
+          }
+
+          @prev_configs, ActiveRecord::Base.configurations = ActiveRecord::Base.configurations, config
+
+          ActiveRecord::Base.connects_to(shards: {
+            default: { writing: :primary },
+            shard_one: { writing: :primary_shard_one }
+          })
+
+          assert_raises(ArgumentError) do
+            ActiveRecord::Base.prohibit_shard_swapping do
+              ActiveRecord::Base.connected_to(role: :reading, shard: :default) do
+              end
+            end
+          end
+        ensure
+          ActiveRecord::Base.configurations = @prev_configs
+          ActiveRecord::Base.establish_connection(:arunit)
+          ENV["RAILS_ENV"] = previous_env
+        end
+
+        def test_can_swap_roles_while_shard_swapping_is_prohibited
+          previous_env, ENV["RAILS_ENV"] = ENV["RAILS_ENV"], "default_env"
+
+          config = {
+            "default_env" => {
+              "primary" => { "adapter" => "sqlite3", "database" => "test/db/primary.sqlite3" },
+              "primary_replica" => { "adapter" => "sqlite3", "database" => "test/db/primary.sqlite3", "replica" => true }
+            }
+          }
+
+          @prev_configs, ActiveRecord::Base.configurations = ActiveRecord::Base.configurations, config
+
+          ActiveRecord::Base.connects_to(shards: { default: { writing: :primary, reading: :primary_replica } })
+
+          ActiveRecord::Base.prohibit_shard_swapping do # no exception
+            ActiveRecord::Base.connected_to(role: :reading) do
+            end
+          end
+        ensure
+          ActiveRecord::Base.configurations = @prev_configs
+          ActiveRecord::Base.establish_connection(:arunit)
+          ENV["RAILS_ENV"] = previous_env
         end
       end
 

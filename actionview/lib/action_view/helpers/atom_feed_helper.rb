@@ -1,11 +1,10 @@
 # frozen_string_literal: true
 
 require "set"
-require "active_support/core_ext/symbol/starts_ends_with"
 
 module ActionView
   # = Action View Atom Feed Helpers
-  module Helpers #:nodoc:
+  module Helpers # :nodoc:
     module AtomFeedHelper
       # Adds easy defaults to writing Atom feeds with the Builder template engine (this does not work on ERB or any other
       # template languages).
@@ -83,9 +82,9 @@ module ActionView
       #     end
       #
       # The Atom spec defines five elements (content rights title subtitle
-      # summary) which may directly contain xhtml content if type: 'xhtml'
+      # summary) which may directly contain XHTML content if type: 'xhtml'
       # is specified as an attribute. If so, this helper will take care of
-      # the enclosing div and xhtml namespace declaration. Example usage:
+      # the enclosing div and XHTML namespace declaration. Example usage:
       #
       #    entry.summary type: 'xhtml' do |xhtml|
       #      xhtml.p pluralize(order.line_items.count, "line item")
@@ -103,7 +102,7 @@ module ActionView
           options[:schema_date] = "2005" # The Atom spec copyright date
         end
 
-        xml = options.delete(:xml) || eval("xml", block.binding)
+        xml = options.delete(:xml) || block.binding.local_variable_get(:xml)
         xml.instruct!
         if options[:instruct]
           options[:instruct].each do |target, attrs|
@@ -127,7 +126,7 @@ module ActionView
         end
       end
 
-      class AtomBuilder #:nodoc:
+      class AtomBuilder # :nodoc:
         XHTML_TAG_NAMES = %w(content rights title subtitle summary).to_set
 
         def initialize(xml)
@@ -135,7 +134,7 @@ module ActionView
         end
 
         private
-          # Delegate to xml builder, first wrapping the element in an xhtml
+          # Delegate to XML Builder, first wrapping the element in an XHTML
           # namespaced div element if the method and arguments indicate
           # that an xhtml_block? is desired.
           def method_missing(method, *arguments, &block)
@@ -161,7 +160,7 @@ module ActionView
           end
       end
 
-      class AtomFeedBuilder < AtomBuilder #:nodoc:
+      class AtomFeedBuilder < AtomBuilder # :nodoc:
         def initialize(xml, view, feed_options = {})
           @xml, @view, @feed_options = xml, view, feed_options
         end

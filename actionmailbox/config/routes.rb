@@ -26,10 +26,11 @@ Rails.application.routes.draw do
 
   # TODO: Should these be mounted within the engine only?
   scope "rails/conductor/action_mailbox/", module: "rails/conductor/action_mailbox" do
-    resources :inbound_emails, as: :rails_conductor_inbound_emails
+    resources :inbound_emails, as: :rails_conductor_inbound_emails, only: %i[index new show create]
     get  "inbound_emails/sources/new", to: "inbound_emails/sources#new", as: :new_rails_conductor_inbound_email_source
     post "inbound_emails/sources", to: "inbound_emails/sources#create", as: :rails_conductor_inbound_email_sources
 
     post ":inbound_email_id/reroute" => "reroutes#create", as: :rails_conductor_inbound_email_reroute
+    post ":inbound_email_id/incinerate" => "incinerates#create", as: :rails_conductor_inbound_email_incinerate
   end
 end

@@ -29,8 +29,8 @@ module ActiveRecord
       extend ActiveSupport::Concern
 
       included do
-        attribute_method_suffix "_before_type_cast", "_for_database"
-        attribute_method_suffix "_came_from_user?"
+        attribute_method_suffix "_before_type_cast", "_for_database", parameters: false
+        attribute_method_suffix "_came_from_user?", parameters: false
       end
 
       # Returns the value of the attribute identified by +attr_name+ before
@@ -52,6 +52,23 @@ module ActiveRecord
         attribute_before_type_cast(name)
       end
 
+      # Returns the value of the attribute identified by +attr_name+ after
+      # serialization.
+      #
+      #   class Book < ActiveRecord::Base
+      #     enum status: { draft: 1, published: 2 }
+      #   end
+      #
+      #   book = Book.new(status: "published")
+      #   book.read_attribute(:status)              # => "published"
+      #   book.read_attribute_for_database(:status) # => 2
+      def read_attribute_for_database(attr_name)
+        name = attr_name.to_s
+        name = self.class.attribute_aliases[name] || name
+
+        attribute_for_database(name)
+      end
+
       # Returns a hash of attributes before typecasting and deserialization.
       #
       #   class Task < ActiveRecord::Base
@@ -64,6 +81,11 @@ module ActiveRecord
       #   # => {"id"=>nil, "title"=>nil, "is_done"=>true, "completed_on"=>"2012-10-21", "created_at"=>nil, "updated_at"=>nil}
       def attributes_before_type_cast
         @attributes.values_before_type_cast
+      end
+
+      # Returns a hash of attributes for assignment to the database.
+      def attributes_for_database
+        @attributes.values_for_database
       end
 
       private

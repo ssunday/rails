@@ -19,7 +19,7 @@ module ActiveRecord
         #
         # You can define a scope that applies to all finders using
         # {default_scope}[rdoc-ref:Scoping::Default::ClassMethods#default_scope].
-        def all
+        def all(all_queries: nil)
           scope = current_scope
 
           if scope
@@ -29,7 +29,7 @@ module ActiveRecord
               relation.merge!(scope)
             end
           else
-            default_scoped
+            default_scoped(all_queries: all_queries)
           end
         end
 
@@ -168,7 +168,6 @@ module ActiveRecord
               "an instance method with the same name."
           end
 
-          valid_scope_name?(name)
           extension = Module.new(&block) if block
 
           if body.respond_to?(:to_proc)
@@ -184,7 +183,7 @@ module ActiveRecord
               scope
             end
           end
-          singleton_class.send(:ruby2_keywords, name) if respond_to?(:ruby2_keywords, true)
+          singleton_class.send(:ruby2_keywords, name)
 
           generate_relation_method(name)
         end
@@ -192,13 +191,6 @@ module ActiveRecord
         private
           def singleton_method_added(name)
             generate_relation_method(name) if Kernel.respond_to?(name) && !ActiveRecord::Relation.method_defined?(name)
-          end
-
-          def valid_scope_name?(name)
-            if respond_to?(name, true) && logger
-              logger.warn "Creating scope :#{name}. " \
-                "Overwriting existing method #{self.name}.#{name}."
-            end
           end
       end
     end

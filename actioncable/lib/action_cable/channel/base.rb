@@ -186,7 +186,7 @@ module ActionCable
       end
 
       # Called by the cable connection when it's cut, so the channel has a chance to cleanup with callbacks.
-      # This method is not intended to be called directly by the user. Instead, overwrite the #unsubscribed callback.
+      # This method is not intended to be called directly by the user. Instead, override the #unsubscribed callback.
       def unsubscribe_from_channel # :nodoc:
         run_callbacks :unsubscribe do
           unsubscribed
@@ -262,7 +262,7 @@ module ActionCable
         end
 
         def dispatch_action(action, data)
-          logger.info action_signature(action, data)
+          logger.debug action_signature(action, data)
 
           if method(action).arity == 1
             public_send action, data

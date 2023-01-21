@@ -13,7 +13,9 @@ module Rails
 
       def build_stack
         ActionDispatch::MiddlewareStack.new do |middleware|
-          middleware.use ::ActionDispatch::HostAuthorization, config.hosts, config.action_dispatch.hosts_response_app, **config.host_authorization
+          unless Array(config.hosts).empty?
+            middleware.use ::ActionDispatch::HostAuthorization, config.hosts, **config.host_authorization
+          end
 
           if config.force_ssl
             middleware.use ::ActionDispatch::SSL, **config.ssl_options,
@@ -42,6 +44,7 @@ module Rails
 
           middleware.use ::ActionDispatch::Executor, app.executor
 
+          middleware.use ::ActionDispatch::ServerTiming if config.server_timing
           middleware.use ::Rack::Runtime
           middleware.use ::Rack::MethodOverride unless config.api_only
           middleware.use ::ActionDispatch::RequestId, header: config.action_dispatch.request_id_header
@@ -55,7 +58,7 @@ module Rails
             middleware.use ::ActionDispatch::ActionableExceptions
           end
 
-          unless config.cache_classes
+          if config.reloading_enabled?
             middleware.use ::ActionDispatch::Reloader, app.reloader
           end
 
@@ -67,10 +70,10 @@ module Rails
               config.session_options[:secure] = true
             end
             middleware.use config.session_store, config.session_options
-            middleware.use ::ActionDispatch::Flash
           end
 
           unless config.api_only
+            middleware.use ::ActionDispatch::Flash
             middleware.use ::ActionDispatch::ContentSecurityPolicy::Middleware
             middleware.use ::ActionDispatch::PermissionsPolicy::Middleware
           end
@@ -80,6 +83,21 @@ module Rails
           middleware.use ::Rack::ETag, "no-cache"
 
           middleware.use ::Rack::TempfileReaper unless config.api_only
+
+          if config.respond_to?(:active_record)
+            if selector_options = config.active_record.database_selector
+              resolver = config.active_record.database_resolver
+              context = config.active_record.database_resolver_context
+
+              middleware.use ::ActiveRecord::Middleware::DatabaseSelector, resolver, context, selector_options
+            end
+
+            if shard_resolver = config.active_record.shard_resolver
+              options = config.active_record.shard_selector || {}
+
+              middleware.use ::ActiveRecord::Middleware::ShardSelector, shard_resolver, options
+            end
+          end
         end
       end
 

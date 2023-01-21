@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "action_dispatch/http/request"
-require "active_support/core_ext/uri"
 require "active_support/core_ext/array/extract_options"
 require "rack/utils"
 require "action_controller/metal/exceptions"
@@ -20,10 +18,19 @@ module ActionDispatch
       def redirect?; true; end
 
       def call(env)
-        serve Request.new env
+        ActiveSupport::Notifications.instrument("redirect.action_dispatch") do |payload|
+          request = Request.new(env)
+          response = build_response(request)
+
+          payload[:status] = @status
+          payload[:location] = response.headers["Location"]
+          payload[:request] = request
+
+          response.to_a
+        end
       end
 
-      def serve(req)
+      def build_response(req)
         uri = URI.parse(path(req.path_parameters, req))
 
         unless uri.host
@@ -40,7 +47,7 @@ module ActionDispatch
 
         req.commit_flash
 
-        body = %(<html><body>You are being <a href="#{ERB::Util.unwrapped_html_escape(uri.to_s)}">redirected</a>.</body></html>)
+        body = ""
 
         headers = {
           "Location" => uri.to_s,
@@ -48,7 +55,7 @@ module ActionDispatch
           "Content-Length" => body.length.to_s
         }
 
-        [ status, headers, [body] ]
+        ActionDispatch::Response.new(status, headers, body)
       end
 
       def path(params, request)
@@ -144,6 +151,11 @@ module ActionDispatch
       # This will redirect the user, while ignoring certain parts of the request, including query string, etc.
       # <tt>/stories</tt>, <tt>/stories?foo=bar</tt>, etc all redirect to <tt>/posts</tt>.
       #
+      # The redirect will use a <tt>301 Moved Permanently</tt> status code by
+      # default. This can be overridden with the +:status+ option:
+      #
+      #   get "/stories" => redirect("/posts", status: 307)
+      #
       # You can also use interpolation in the supplied redirect argument:
       #
       #   get 'docs/:article', to: redirect('/wiki/%{article}')
@@ -164,7 +176,7 @@ module ActionDispatch
       #     "http://#{request.host_with_port}/#{path}"
       #   }
       #
-      # Note that the +do end+ syntax for the redirect block wouldn't work, as Ruby would pass
+      # Note that the <tt>do end</tt> syntax for the redirect block wouldn't work, as Ruby would pass
       # the block to +get+ instead of +redirect+. Use <tt>{ ... }</tt> instead.
       #
       # The options version of redirect allows you to supply only the parts of the URL which need

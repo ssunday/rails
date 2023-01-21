@@ -133,9 +133,11 @@ module ActiveRecord
     end
 
     def test_or_with_non_relation_object_raises_error
-      assert_raises ArgumentError do
+      error = assert_raises ArgumentError do
         Post.where(id: [1, 2, 3]).or(title: "Rails")
       end
+
+      assert_equal "You have passed Hash object to #or. Pass an ActiveRecord::Relation object instead.", error.message
     end
 
     def test_or_with_references_inequality
@@ -176,8 +178,8 @@ module ActiveRecord
 
   # The maximum expression tree depth is 1000 by default for SQLite3.
   # https://www.sqlite.org/limits.html#max_expr_depth
-  unless current_adapter?(:SQLite3Adapter)
-    class TooManyOrTest < ActiveRecord::TestCase
+  class TooManyOrTest < ActiveRecord::TestCase
+    unless current_adapter?(:SQLite3Adapter)
       fixtures :citations
 
       def test_too_many_or

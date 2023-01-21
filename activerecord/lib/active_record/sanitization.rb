@@ -19,6 +19,14 @@ module ActiveRecord
       #
       #   sanitize_sql_for_conditions("name='foo''bar' and group_id='4'")
       #   # => "name='foo''bar' and group_id='4'"
+      #
+      # Note that this sanitization method is not schema-aware, hence won't do any type casting
+      # and will directly use the database adapter's +quote+ method.
+      # For MySQL specifically this means that numeric parameters will be quoted as strings
+      # to prevent query manipulation attacks.
+      #
+      #   sanitize_sql_for_conditions(["role = ?", 0])
+      #   # => "role = '0'"
       def sanitize_sql_for_conditions(condition)
         return nil if condition.blank?
 
@@ -43,6 +51,14 @@ module ActiveRecord
       #
       #   sanitize_sql_for_assignment("name=NULL and group_id='4'")
       #   # => "name=NULL and group_id='4'"
+      #
+      # Note that this sanitization method is not schema-aware, hence won't do any type casting
+      # and will directly use the database adapter's +quote+ method.
+      # For MySQL specifically this means that numeric parameters will be quoted as strings
+      # to prevent query manipulation attacks.
+      #
+      #   sanitize_sql_for_assignment(["role = ?", 0])
+      #   # => "role = '0'"
       def sanitize_sql_for_assignment(assignments, default_table_name = table_name)
         case assignments
         when Array; sanitize_sql_array(assignments)
@@ -54,7 +70,7 @@ module ActiveRecord
       # Accepts an array, or string of SQL conditions and sanitizes
       # them into a valid SQL fragment for an ORDER clause.
       #
-      #   sanitize_sql_for_order(["field(id, ?)", [1,3,2]])
+      #   sanitize_sql_for_order([Arel.sql("field(id, ?)"), [1,3,2]])
       #   # => "field(id, 1,3,2)"
       #
       #   sanitize_sql_for_order("id ASC")
@@ -92,22 +108,26 @@ module ActiveRecord
       end
 
       # Sanitizes a +string+ so that it is safe to use within an SQL
-      # LIKE statement. This method uses +escape_character+ to escape all occurrences of "\", "_" and "%".
+      # LIKE statement. This method uses +escape_character+ to escape all
+      # occurrences of itself, "_" and "%".
       #
-      #   sanitize_sql_like("100%")
-      #   # => "100\\%"
+      #   sanitize_sql_like("100% true!")
+      #   # => "100\\% true!"
       #
       #   sanitize_sql_like("snake_cased_string")
       #   # => "snake\\_cased\\_string"
       #
-      #   sanitize_sql_like("100%", "!")
-      #   # => "100!%"
+      #   sanitize_sql_like("100% true!", "!")
+      #   # => "100!% true!!"
       #
       #   sanitize_sql_like("snake_cased_string", "!")
       #   # => "snake!_cased!_string"
       def sanitize_sql_like(string, escape_character = "\\")
-        pattern = Regexp.union(escape_character, "%", "_")
-        string.gsub(pattern) { |x| [escape_character, x].join }
+        if string.include?(escape_character) && escape_character != "%" && escape_character != "_"
+          string = string.gsub(escape_character, '\0\0')
+        end
+
+        string.gsub(/(?=[%_])/, escape_character)
       end
 
       # Accepts an array of conditions. The array has each value
@@ -121,6 +141,14 @@ module ActiveRecord
       #
       #   sanitize_sql_array(["name='%s' and group_id='%s'", "foo'bar", 4])
       #   # => "name='foo''bar' and group_id='4'"
+      #
+      # Note that this sanitization method is not schema-aware, hence won't do any type casting
+      # and will directly use the database adapter's +quote+ method.
+      # For MySQL specifically this means that numeric parameters will be quoted as strings
+      # to prevent query manipulation attacks.
+      #
+      #   sanitize_sql_array(["role = ?", 0])
+      #   # => "role = '0'"
       def sanitize_sql_array(ary)
         statement, *values = ary
         if values.first.is_a?(Hash) && /:\w+/.match?(statement)
@@ -137,14 +165,18 @@ module ActiveRecord
       def disallow_raw_sql!(args, permit: connection.column_name_matcher) # :nodoc:
         unexpected = nil
         args.each do |arg|
-          next if arg.is_a?(Symbol) || Arel.arel_node?(arg) || permit.match?(arg.to_s)
+          next if arg.is_a?(Symbol) || Arel.arel_node?(arg) || permit.match?(arg.to_s.strip)
           (unexpected ||= []) << arg
         end
 
         if unexpected
           raise(ActiveRecord::UnknownAttributeReference,
-            "Query method called with non-attribute argument(s): " +
-            unexpected.map(&:inspect).join(", ")
+            "Dangerous query method (method whose arguments are used as raw " \
+            "SQL) called with non-attribute argument(s): " \
+            "#{unexpected.map(&:inspect).join(", ")}." \
+            "This method should not be called with user-provided values, such as request " \
+            "parameters or model attributes. Known-safe values can be passed " \
+            "by wrapping them in Arel.sql()."
           )
         end
       end
@@ -183,13 +215,13 @@ module ActiveRecord
           if value.respond_to?(:map) && !value.acts_like?(:string)
             values = value.map { |v| v.respond_to?(:id_for_database) ? v.id_for_database : v }
             if values.empty?
-              c.quote(nil)
+              c.quote_bound_value(nil)
             else
-              values.map! { |v| c.quote(v) }.join(",")
+              values.map! { |v| c.quote_bound_value(v) }.join(",")
             end
           else
             value = value.id_for_database if value.respond_to?(:id_for_database)
-            c.quote(value)
+            c.quote_bound_value(value)
           end
         end
 

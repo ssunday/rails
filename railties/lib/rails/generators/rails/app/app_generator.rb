@@ -54,6 +54,10 @@ module Rails
       template "ruby-version", ".ruby-version"
     end
 
+    def node_version
+      template "node-version", ".node-version"
+    end
+
     def gemfile
       template "Gemfile"
     end
@@ -70,14 +74,18 @@ module Rails
       template "gitattributes", ".gitattributes"
     end
 
-    def version_control
-      if !options[:skip_git] && !options[:pretend]
-        run "git init", capture: options[:quiet], abort_on_failure: false
-      end
+    def dockerfiles
+      template "Dockerfile"
+      template "dockerignore", ".dockerignore"
+
+      template "docker-entrypoint", "bin/docker-entrypoint"
+      chmod "bin/docker-entrypoint", 0755 & ~File.umask, verbose: false
     end
 
-    def package_json
-      template "package.json"
+    def version_control
+      if !options[:skip_git] && !options[:pretend]
+        run git_init_command, capture: options[:quiet], abort_on_failure: false
+      end
     end
 
     def app
@@ -94,45 +102,30 @@ module Rails
         "#{shebang}\n" + content
       end
       chmod "bin", 0755 & ~File.umask, verbose: false
-
-      remove_file "bin/spring" unless spring_install?
-      remove_file "bin/yarn" if options[:skip_javascript]
     end
 
     def bin_when_updating
       bin
     end
 
-    def yarn_when_updating
-      return if File.exist?("bin/yarn")
-
-      template "bin/yarn" do |content|
-        "#{shebang}\n" + content
-      end
-
-      chmod "bin", 0755 & ~File.umask, verbose: false
-    end
-
     def config
       empty_directory "config"
 
       inside "config" do
-        template "routes.rb"
+        template "routes.rb" unless options[:update]
         template "application.rb"
         template "environment.rb"
-        template "cable.yml" unless options[:skip_action_cable]
-        template "puma.rb"   unless options[:skip_puma]
-        template "spring.rb" if spring_install?
-        template "storage.yml" unless skip_active_storage?
+        template "cable.yml" unless options[:update] || options[:skip_action_cable]
+        template "puma.rb"   unless options[:update]
+        template "storage.yml" unless options[:update] || skip_active_storage?
 
         directory "environments"
         directory "initializers"
-        directory "locales"
+        directory "locales" unless options[:update]
       end
     end
 
     def config_when_updating
-      cookie_serializer_config_exist  = File.exist?("config/initializers/cookies_serializer.rb")
       action_cable_config_exist       = File.exist?("config/cable.yml")
       active_storage_config_exist     = File.exist?("config/storage.yml")
       rack_cors_config_exist          = File.exist?("config/initializers/cors.rb")
@@ -145,11 +138,6 @@ module Rails
       @config_target_version = Rails.application.config.loaded_config_version || "5.0"
 
       config
-      configru
-
-      unless cookie_serializer_config_exist
-        gsub_file "config/initializers/cookies_serializer.rb", /json(?!,)/, "marshal"
-      end
 
       if !options[:skip_action_cable] && !action_cable_config_exist
         template "config/cable.yml"
@@ -159,15 +147,15 @@ module Rails
         template "config/storage.yml"
       end
 
-      if options[:skip_sprockets] && !assets_config_exist
+      if skip_sprockets? && skip_propshaft? && !assets_config_exist
         remove_file "config/initializers/assets.rb"
       end
 
-      if options[:skip_sprockets] && !asset_manifest_exist
+      if skip_sprockets? && !asset_manifest_exist
         remove_file "app/assets/config/manifest.js"
       end
 
-      if options[:skip_sprockets] && !asset_app_stylesheet_exist
+      if skip_sprockets? && !asset_app_stylesheet_exist
         remove_file "app/assets/stylesheets/application.css"
       end
 
@@ -176,10 +164,6 @@ module Rails
       end
 
       if options[:api]
-        unless cookie_serializer_config_exist
-          remove_file "config/initializers/cookies_serializer.rb"
-        end
-
         unless csp_config_exist
           remove_file "config/initializers/content_security_policy.rb"
         end
@@ -187,6 +171,10 @@ module Rails
         unless permissions_policy_config_exist
           remove_file "config/initializers/permissions_policy.rb"
         end
+      end
+
+      if !skip_sprockets?
+        insert_into_file "config/application.rb", %(require "sprockets/railtie"), after: /require\(["']rails\/all["']\)\n/
       end
     end
 
@@ -203,7 +191,15 @@ module Rails
       return if options[:pretend] || options[:dummy_app]
 
       require "rails/generators/rails/credentials/credentials_generator"
-      Rails::Generators::CredentialsGenerator.new([], quiet: options[:quiet]).add_credentials_file_silently
+      Rails::Generators::CredentialsGenerator.new([], quiet: true).add_credentials_file
+    end
+
+    def credentials_diff_enroll
+      return if options[:skip_decrypted_diffs] || options[:dummy_app] || options[:pretend]
+
+      @generator.shell.mute do
+        rails_command "credentials:diff --enroll", inline: true, shell: @generator.shell
+      end
     end
 
     def database_yml
@@ -275,74 +271,65 @@ module Rails
     class AppGenerator < AppBase
       # :stopdoc:
 
-      WEBPACKS = %w( react vue angular elm stimulus )
-
       add_shared_options_for "application"
 
       # Add rails command options
-      class_option :version, type: :boolean, aliases: "-v", group: :rails,
-                             desc: "Show Rails version number and quit"
+      class_option :version, type: :boolean, aliases: "-v", group: :rails, desc: "Show Rails version number and quit"
+      class_option :api, type: :boolean, desc: "Preconfigure smaller stack for API only apps"
+      class_option :minimal, type: :boolean, desc: "Preconfigure a minimal rails app"
+      class_option :javascript, type: :string, aliases: ["-j", "--js"], default: "importmap", desc: "Choose JavaScript approach [options: importmap (default), webpack, esbuild, rollup]"
+      class_option :css, type: :string, aliases: "-c", desc: "Choose CSS processor [options: tailwind, bootstrap, bulma, postcss, sass] check https://github.com/rails/cssbundling-rails for more options"
+      class_option :skip_bundle, type: :boolean, aliases: "-B", default: nil, desc: "Don't run bundle install"
+      class_option :skip_decrypted_diffs, type: :boolean, default: nil, desc: "Don't configure git to show decrypted diffs of encrypted credentials"
 
-      class_option :api, type: :boolean,
-                         desc: "Preconfigure smaller stack for API only apps"
+      OPTION_IMPLICATIONS = # :nodoc:
+        AppBase::OPTION_IMPLICATIONS.merge(
+          skip_git: [:skip_decrypted_diffs],
+          minimal: [
+            :skip_action_cable,
+            :skip_action_mailbox,
+            :skip_action_mailer,
+            :skip_action_text,
+            :skip_active_job,
+            :skip_active_storage,
+            :skip_bootsnap,
+            :skip_dev_gems,
+            :skip_hotwire,
+            :skip_javascript,
+            :skip_jbuilder,
+            :skip_system_test,
+          ],
+          api: [
+            :skip_asset_pipeline,
+            :skip_javascript,
+          ],
+        ) do |option, implications, more_implications|
+          implications + more_implications
+        end
 
-      class_option :minimal, type: :boolean,
-                             desc: "Preconfigure a minimal rails app"
-
-      class_option :skip_bundle, type: :boolean, aliases: "-B", default: false,
-                                 desc: "Don't run bundle install"
-
-      class_option :webpack, type: :string, aliases: "--webpacker", default: nil,
-                             desc: "Preconfigure Webpack with a particular framework (options: #{WEBPACKS.join(", ")})"
-
-      class_option :skip_webpack_install, type: :boolean, default: false,
-                                          desc: "Don't run Webpack install"
+      META_OPTIONS = [:minimal] # :nodoc:
 
       def initialize(*args)
         super
+
+        imply_options(OPTION_IMPLICATIONS, meta_options: META_OPTIONS)
 
         if !options[:skip_active_record] && !DATABASES.include?(options[:database])
           raise Error, "Invalid value for --database option. Supported preconfigurations are: #{DATABASES.join(", ")}."
         end
 
-        # Force sprockets and yarn to be skipped when generating API only apps.
-        # Can't modify options hash as it's frozen by default.
-        if options[:api]
-          self.options = options.merge(skip_sprockets: true, skip_javascript: true).freeze
-        end
-
-        if options[:minimal]
-          self.options = options.merge(
-            skip_action_cable: true,
-            skip_action_mailer: true,
-            skip_action_mailbox: true,
-            skip_action_text: true,
-            skip_active_job: true,
-            skip_active_storage: true,
-            skip_bootsnap: true,
-            skip_dev_gems: true,
-            skip_javascript: true,
-            skip_jbuilder: true,
-            skip_spring: true,
-            skip_system_test: true,
-            skip_webpack_install: true,
-            skip_turbolinks: true).tap do |option|
-              if option[:webpack]
-                option[:skip_webpack_install] = false
-                option[:skip_javascript] = false
-              end
-            end.freeze
-        end
-
         @after_bundle_callbacks = []
       end
 
+      public_task :report_implied_options
       public_task :set_default_accessors!
       public_task :create_root
+      public_task :target_rails_prerelease
 
       def create_root_files
         build(:readme)
         build(:rakefile)
+        build(:node_version) if using_node?
         build(:ruby_version)
         build(:configru)
 
@@ -351,9 +338,8 @@ module Rails
           build(:gitattributes)
         end
 
-        build(:gemfile) unless options[:skip_gemfile]
+        build(:gemfile)
         build(:version_control)
-        build(:package_json) unless options[:skip_javascript]
       end
 
       def create_app_files
@@ -369,17 +355,17 @@ module Rails
       end
       remove_task :update_bin_files
 
-      def update_bin_yarn
-        build(:yarn_when_updating)
-      end
-      remove_task :update_bin_yarn
-
       def update_active_storage
         unless skip_active_storage?
           rails_command "active_storage:update", inline: true
         end
       end
       remove_task :update_active_storage
+
+      def create_dockerfiles
+        return if options[:skip_docker] || options[:dummy_app]
+        build(:dockerfiles)
+      end
 
       def create_config_files
         build(:config)
@@ -396,6 +382,7 @@ module Rails
 
       def create_credentials
         build(:credentials)
+        build(:credentials_diff_enroll)
       end
 
       def display_upgrade_guide_info
@@ -446,7 +433,7 @@ module Rails
       end
 
       def create_storage_files
-        build(:storage) unless skip_active_storage?
+        build(:storage)
       end
 
       def delete_app_assets_if_api_option
@@ -485,24 +472,16 @@ module Rails
         end
       end
 
-      def delete_js_folder_skipping_javascript
-        if options[:skip_javascript] && !options[:minimal]
-          remove_dir "app/javascript"
-        end
-      end
-
-      def delete_js_packs_when_minimal_skipping_webpack
-        if options[:minimal] && options[:skip_webpack_install]
-          remove_dir "app/javascript/packs"
-          keep_file  "app/javascript"
-        end
-      end
-
-      def delete_assets_initializer_skipping_sprockets
-        if options[:skip_sprockets]
+      def delete_assets_initializer_skipping_sprockets_and_propshaft
+        if skip_sprockets? && skip_propshaft?
           remove_file "config/initializers/assets.rb"
+        end
+
+        if skip_sprockets?
           remove_file "app/assets/config/manifest.js"
+          remove_dir  "app/assets/config"
           remove_file "app/assets/stylesheets/application.css"
+          create_file "app/assets/stylesheets/application.css", "/* Application styles */\n" unless options[:api]
         end
       end
 
@@ -537,7 +516,6 @@ module Rails
 
       def delete_non_api_initializers_if_api_option
         if options[:api]
-          remove_file "config/initializers/cookies_serializer.rb"
           remove_file "config/initializers/content_security_policy.rb"
           remove_file "config/initializers/permissions_policy.rb"
         end
@@ -551,7 +529,7 @@ module Rails
 
       def delete_new_framework_defaults
         unless options[:update]
-          remove_file "config/initializers/new_framework_defaults_6_2.rb"
+          remove_file "config/initializers/new_framework_defaults_#{Rails::VERSION::MAJOR}_#{Rails::VERSION::MINOR}.rb"
         end
       end
 
@@ -561,7 +539,9 @@ module Rails
 
       public_task :apply_rails_template, :run_bundle
       public_task :generate_bundler_binstub
-      public_task :run_webpack
+      public_task :run_javascript
+      public_task :run_hotwire
+      public_task :run_css
 
       def run_after_bundle_callbacks
         @after_bundle_callbacks.each(&:call)
@@ -579,7 +559,7 @@ module Rails
         create_file(*args, &block)
       end
 
-      # Registers a callback to be executed after bundle and spring binstubs
+      # Registers a callback to be executed after bundle binstubs
       # have run.
       #
       #   after_bundle do

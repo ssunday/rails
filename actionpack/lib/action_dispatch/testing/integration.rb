@@ -3,12 +3,12 @@
 require "stringio"
 require "uri"
 require "rack/test"
-require "minitest"
+require "active_support/test_case"
 
 require "action_dispatch/testing/request_encoder"
 
 module ActionDispatch
-  module Integration #:nodoc:
+  module Integration # :nodoc:
     module RequestHelpers
       # Performs a GET request with the given parameters. See ActionDispatch::Integration::Session#process
       # for more details.
@@ -58,7 +58,9 @@ module ActionDispatch
       # the same HTTP verb will be used when redirecting, otherwise a GET request
       # will be performed. Any arguments are passed to the
       # underlying request.
-      def follow_redirect!(**args)
+      #
+      # The HTTP_REFERER header will be set to the previous url.
+      def follow_redirect!(headers: {}, **args)
         raise "not a redirect! #{status} #{status_message}" unless redirect?
 
         method =
@@ -68,7 +70,11 @@ module ActionDispatch
             :get
           end
 
-        public_send(method, response.location, **args)
+        if [ :HTTP_REFERER, "HTTP_REFERER" ].none? { |key| headers.key? key }
+          headers["HTTP_REFERER"] = request.url
+        end
+
+        public_send(method, response.location, headers: headers, **args)
         status
       end
     end
@@ -199,11 +205,11 @@ module ActionDispatch
       #   merged into the Rack env hash.
       # - +env+: Additional env to pass, as a Hash. The headers will be
       #   merged into the Rack env hash.
-      # - +xhr+: Set to `true` if you want to make and Ajax request.
+      # - +xhr+: Set to +true+ if you want to make an Ajax request.
       #   Adds request headers characteristic of XMLHttpRequest e.g. HTTP_X_REQUESTED_WITH.
       #   The headers will be merged into the Rack env hash.
       # - +as+: Used for encoding the request with different content type.
-      #   Supports `:json` by default and will set the appropriate request headers.
+      #   Supports +:json+ by default and will set the appropriate request headers.
       #   The headers will be merged into the Rack env hash.
       #
       # This method is rarely used directly. Use +#get+, +#post+, or other standard
@@ -252,9 +258,12 @@ module ActionDispatch
           "REQUEST_URI"    => path,
           "HTTP_HOST"      => host,
           "REMOTE_ADDR"    => remote_addr,
-          "CONTENT_TYPE"   => request_encoder.content_type,
           "HTTP_ACCEPT"    => request_encoder.accept_header || accept
         }
+
+        if request_encoder.content_type
+          request_env["CONTENT_TYPE"] = request_encoder.content_type
+        end
 
         wrapped_headers = Http::Headers.from_hash({})
         wrapped_headers.merge!(headers) if headers
@@ -363,13 +372,11 @@ module ActionDispatch
           reset_html_document = "@html_document = nil"
         end
 
-        definition = RUBY_VERSION >= "2.7" ? "..." : "*args"
-
         module_eval <<~RUBY, __FILE__, __LINE__ + 1
-          def #{method}(#{definition})
+          def #{method}(...)
             #{reset_html_document}
 
-            result = integration_session.#{method}(#{definition})
+            result = integration_session.#{method}(...)
             copy_session_variables!
             result
           end
@@ -404,7 +411,7 @@ module ActionDispatch
 
       # Copy the instance variables from the current session instance into the
       # test instance.
-      def copy_session_variables! #:nodoc:
+      def copy_session_variables! # :nodoc:
         @controller = @integration_session.controller
         @response   = @integration_session.response
         @request    = @integration_session.request
@@ -433,7 +440,7 @@ module ActionDispatch
           super
         end
       end
-      ruby2_keywords(:method_missing) if respond_to?(:ruby2_keywords, true)
+      ruby2_keywords(:method_missing)
     end
   end
 

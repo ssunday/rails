@@ -3,6 +3,7 @@
 class Post < ActiveRecord::Base
   class CategoryPost < ActiveRecord::Base
     self.table_name = "categories_posts"
+    belongs_to :group, foreign_key: :category_id, class_name: "Category"
     belongs_to :category
     belongs_to :post
   end
@@ -29,9 +30,15 @@ class Post < ActiveRecord::Base
   scope :containing_the_letter_a, -> { where("body LIKE '%a%'") }
   scope :titled_with_an_apostrophe, -> { where("title LIKE '%''%'") }
   scope :ranked_by_comments, -> { order(table[:comments_count].desc) }
+  scope :ordered_by_post_id, -> { order("posts.post_id ASC") }
 
   scope :limit_by, lambda { |l| limit(l) }
   scope :locked, -> { lock }
+  scope :most_commented, lambda { |comments_count|
+    joins(:comments)
+    .group("posts.id")
+    .having("count(comments.id) >= #{comments_count}")
+  }
 
   belongs_to :author
   belongs_to :readonly_author, -> { readonly }, class_name: "Author", foreign_key: :author_id
@@ -39,6 +46,7 @@ class Post < ActiveRecord::Base
   belongs_to :author_with_posts, -> { includes(:posts) }, class_name: "Author", foreign_key: :author_id
   belongs_to :author_with_address, -> { includes(:author_address) }, class_name: "Author", foreign_key: :author_id
   belongs_to :author_with_select, -> { select(:id) }, class_name: "Author", foreign_key: :author_id
+  belongs_to :author_with_the_letter_a, -> { where("name LIKE '%a%'") }, class_name: "Author", foreign_key: :author_id
 
   def first_comment
     super.body
@@ -53,6 +61,7 @@ class Post < ActiveRecord::Base
 
   scope :with_comments, -> { preload(:comments) }
   scope :with_tags, -> { preload(:taggings) }
+  scope :with_tags_cte, -> { with(posts_with_tags: where("tags_count > 0")).from("posts_with_tags AS posts") }
 
   scope :tagged_with, ->(id) { joins(:taggings).where(taggings: { tag_id: id }) }
   scope :tagged_with_comment, ->(comment) { joins(:taggings).where(taggings: { comment: comment }) }
@@ -83,6 +92,8 @@ class Post < ActiveRecord::Base
     end
   end
 
+  has_many :comments_with_extending, -> { extending(NamedExtension) }, class_name: "Comment", foreign_key: "post_id"
+
   has_many :comments_with_extend_2, extend: [NamedExtension, NamedExtension2], class_name: "Comment", foreign_key: "post_id"
 
   has_many :author_favorites, through: :author
@@ -104,6 +115,7 @@ class Post < ActiveRecord::Base
 
   has_many :category_posts, class_name: "CategoryPost"
   has_many :scategories, through: :category_posts, source: :category
+  has_many :hmt_special_categories, -> { where.not(name: nil) },  through: :category_posts, source: :category, class_name: "SpecialCategory"
   has_and_belongs_to_many :categories
   has_and_belongs_to_many :special_categories, join_table: "categories_posts", association_foreign_key: "category_id"
 
@@ -320,6 +332,10 @@ class FakeKlass
   extend ActiveRecord::Delegation::DelegateCache
 
   class << self
+    def scope_registry
+      ActiveRecord::Scoping::ScopeRegistry.instance
+    end
+
     def connection
       Post.connection
     end
@@ -363,7 +379,26 @@ class FakeKlass
     def base_class?
       true
     end
+
+    def deterministic_encrypted_attributes
+    end
   end
 
   inherited self
+end
+
+class Postesque < ActiveRecord::Base
+  belongs_to :author, class_name: "Author", foreign_key: :author_name, primary_key: :name
+  belongs_to :author_with_address, class_name: "Author", foreign_key: :author_id
+  belongs_to :author_with_the_letter_a, class_name: "Author", foreign_key: :author_id
+end
+
+class PostRecord < ActiveRecord::Base
+  has_many :comments
+
+  class << self
+    def model_name
+      ActiveModel::Name.new(self, nil, "Post")
+    end
+  end
 end

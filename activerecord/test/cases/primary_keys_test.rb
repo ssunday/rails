@@ -174,6 +174,7 @@ class PrimaryKeysTest < ActiveRecord::TestCase
 
   def test_quoted_primary_key_after_set_primary_key
     k = Class.new(ActiveRecord::Base)
+    k.table_name = "bar"
     assert_equal k.connection.quote_column_name("id"), k.quoted_primary_key
     k.primary_key = "foo"
     assert_equal k.connection.quote_column_name("foo"), k.quoted_primary_key
@@ -320,7 +321,7 @@ class PrimaryKeyAnyTypeTest < ActiveRecord::TestCase
     test "schema typed primary key column" do
       @connection.create_table(:scheduled_logs, id: :timestamp, precision: 6, force: true)
       schema = dump_table_schema("scheduled_logs")
-      assert_match %r/create_table "scheduled_logs", id: { type: :timestamp, precision: 6.* }/, schema
+      assert_match %r/create_table "scheduled_logs", id: :timestamp.*/, schema
     end
   end
 end
@@ -415,8 +416,8 @@ class PrimaryKeyIntegerNilDefaultTest < ActiveRecord::TestCase
   end
 end
 
-if current_adapter?(:PostgreSQLAdapter, :Mysql2Adapter)
-  class PrimaryKeyIntegerTest < ActiveRecord::TestCase
+class PrimaryKeyIntegerTest < ActiveRecord::TestCase
+  if current_adapter?(:PostgreSQLAdapter, :Mysql2Adapter)
     include SchemaDumpingHelper
 
     self.use_transactional_tests = false

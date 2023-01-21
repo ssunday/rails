@@ -25,11 +25,16 @@ require "models/admin/user"
 require "models/ship"
 require "models/treasure"
 require "models/parrot"
+require "models/book"
+require "models/citation"
+require "models/tree"
+require "models/node"
+require "models/club"
 
 class BelongsToAssociationsTest < ActiveRecord::TestCase
   fixtures :accounts, :companies, :developers, :projects, :topics,
            :developers_projects, :computers, :authors, :author_addresses,
-           :essays, :posts, :tags, :taggings, :comments, :sponsors, :members
+           :essays, :posts, :tags, :taggings, :comments, :sponsors, :members, :nodes
 
   def test_belongs_to
     client = Client.find(3)
@@ -42,6 +47,19 @@ class BelongsToAssociationsTest < ActiveRecord::TestCase
 
   def test_where_with_custom_primary_key
     assert_equal [authors(:david)], Author.where(owned_essay: essays(:david_modest_proposal))
+  end
+
+  def test_find_by_with_custom_primary_key
+    assert_equal authors(:david), Author.find_by(owned_essay: essays(:david_modest_proposal))
+  end
+
+  def test_where_on_polymorphic_association_with_nil
+    assert_equal comments(:greetings), Comment.where(author: nil).first
+    assert_equal comments(:greetings), Comment.where(author: [nil]).first
+  end
+
+  def test_where_on_polymorphic_association_with_empty_array
+    assert_empty Comment.where(author: [])
   end
 
   def test_assigning_belongs_to_on_destroyed_object
@@ -396,7 +414,10 @@ class BelongsToAssociationsTest < ActiveRecord::TestCase
     Company.where(id: odegy_account.firm_id).update_all(name: "ODEGY")
     assert_equal "Odegy", odegy_account.firm.name
 
-    assert_equal "ODEGY", odegy_account.reload_firm.name
+    assert_queries(1) { odegy_account.reload_firm }
+
+    assert_no_queries { odegy_account.firm }
+    assert_equal "ODEGY", odegy_account.firm.name
   end
 
   def test_reload_the_belonging_object_with_query_cache
@@ -421,6 +442,18 @@ class BelongsToAssociationsTest < ActiveRecord::TestCase
     assert_queries(1) { Account.find(odegy_account_id) }
   ensure
     ActiveRecord::Base.connection.disable_query_cache!
+  end
+
+  def test_resetting_the_association
+    odegy_account = accounts(:odegy_account)
+
+    assert_equal "Odegy", odegy_account.firm.name
+    Company.where(id: odegy_account.firm_id).update_all(name: "ODEGY")
+    assert_equal "Odegy", odegy_account.firm.name
+
+    assert_no_queries { odegy_account.reset_firm }
+    assert_queries(1) { odegy_account.firm }
+    assert_equal "ODEGY", odegy_account.firm.name
   end
 
   def test_natural_assignment_to_nil
@@ -981,15 +1014,17 @@ class BelongsToAssociationsTest < ActiveRecord::TestCase
 
   def test_polymorphic_assignment_foreign_key_type_string
     comment = Comment.first
-    comment.author   = Author.first
-    comment.resource = Member.first
+    comment.author   = authors(:david)
+    comment.resource = members(:groucho)
     comment.save
 
-    assert_equal Comment.all.to_a,
-      Comment.includes(:author).to_a
+    assert_equal 1, authors(:david).id
+    assert_equal 1, comment.author_id
+    assert_equal authors(:david), Comment.includes(:author).first.author
 
-    assert_equal Comment.all.to_a,
-      Comment.includes(:resource).to_a
+    assert_equal 1, members(:groucho).id
+    assert_equal "1", comment.resource_id
+    assert_equal members(:groucho), Comment.includes(:resource).first.resource
   end
 
   def test_polymorphic_assignment_foreign_type_field_updating
@@ -1117,6 +1152,11 @@ class BelongsToAssociationsTest < ActiveRecord::TestCase
     assert_equal error.message, "The :dependent option must be one of [:destroy, :delete, :destroy_async], but is :nullify"
   end
 
+  class EssayDestroy < ActiveRecord::Base
+    self.table_name = "essays"
+    belongs_to :book, dependent: :destroy, class_name: "DestroyableBook"
+  end
+
   class DestroyableBook < ActiveRecord::Base
     self.table_name = "books"
     belongs_to :author, class_name: "UndestroyableAuthor", dependent: :destroy
@@ -1138,6 +1178,17 @@ class BelongsToAssociationsTest < ActiveRecord::TestCase
 
     assert_no_difference ["UndestroyableAuthor.count", "DestroyableBook.count"] do
       assert_not book.destroy
+    end
+  end
+
+  def test_dependency_should_halt_parent_destruction_with_cascaded_three_levels
+    author = UndestroyableAuthor.create!(name: "Test")
+    book = DestroyableBook.create!(author: author)
+    essay = EssayDestroy.create!(book: book)
+
+    assert_no_difference ["UndestroyableAuthor.count", "DestroyableBook.count", "EssayDestroy.count"] do
+      assert_not essay.destroy
+      assert_not essay.destroyed?
     end
   end
 
@@ -1170,6 +1221,44 @@ class BelongsToAssociationsTest < ActiveRecord::TestCase
     assert_predicate firm_with_condition_proxy, :stale_target?
     assert_equal companies(:another_firm), client.firm
     assert_equal companies(:another_firm), client.firm_with_condition
+  end
+
+  def test_assigning_nil_on_an_association_clears_the_associations_inverse
+    with_has_many_inversing do
+      book = Book.create!
+      citation = book.citations.create!
+
+      assert_same book, citation.book
+
+      assert_nothing_raised do
+        citation.book = nil
+        citation.save!
+      end
+    end
+  end
+
+  def test_clearing_an_association_clears_the_associations_inverse
+    author = Author.create(name: "Jimmy Tolkien")
+    post = author.create_post(title: "The silly medallion", body: "")
+    assert_equal post, author.post
+    assert_equal author, post.author
+
+    author.update!(post: nil)
+    assert_nil author.post
+
+    post.update!(title: "The Silmarillion")
+    assert_nil author.post
+  end
+
+  def test_destroying_child_with_unloaded_parent_and_foreign_key_and_touch_is_possible_with_has_many_inversing
+    with_has_many_inversing do
+      book     = Book.create!
+      citation = book.citations.create!
+
+      assert_difference "Citation.count", -1 do
+        Citation.find(citation.id).destroy
+      end
+    end
   end
 
   def test_polymorphic_reassignment_of_associated_id_updates_the_object
@@ -1257,6 +1346,47 @@ class BelongsToAssociationsTest < ActiveRecord::TestCase
     assert_equal groucho, sponsor.thing
   end
 
+  class WheelPolymorphicName < ActiveRecord::Base
+    self.table_name = "wheels"
+    belongs_to :wheelable, polymorphic: true, counter_cache: :wheels_count, touch: :wheels_owned_at
+
+    def self.polymorphic_class_for(name)
+      raise "Unexpected name: #{name}" unless name == "polymorphic_car"
+      CarPolymorphicName
+    end
+  end
+
+  class CarPolymorphicName < ActiveRecord::Base
+    self.table_name = "cars"
+    has_many :wheels, as: :wheelable
+
+    def self.polymorphic_name
+      "polymorphic_car"
+    end
+  end
+
+  def test_polymorphic_with_custom_name_counter_cache
+    car = CarPolymorphicName.create!
+    wheel = WheelPolymorphicName.create!(wheelable_type: "polymorphic_car", wheelable_id: car.id)
+    assert_equal 1, car.reload.wheels_count
+
+    wheel.update! wheelable: nil
+
+    assert_equal 0, car.reload.wheels_count
+  end
+
+  def test_polymorphic_with_custom_name_touch_old_belongs_to_model
+    car = CarPolymorphicName.create!
+    wheel = WheelPolymorphicName.create!(wheelable: car)
+
+    touch_time = 1.day.ago.round
+    travel_to(touch_time) do
+      wheel.update!(wheelable: nil)
+    end
+
+    assert_equal touch_time, car.reload.wheels_owned_at
+  end
+
   def test_build_with_conditions
     client = companies(:second_client)
     firm   = client.build_bob_firm
@@ -1313,6 +1443,31 @@ class BelongsToAssociationsTest < ActiveRecord::TestCase
     assert_equal firm.id, client.client_of
   end
 
+  def test_should_set_foreign_key_on_create_association_with_unpersisted_owner
+    tagging = Tagging.new
+    tag = tagging.create_tag
+
+    assert_not_predicate tagging, :persisted?
+    assert_predicate tag, :persisted?
+    assert_equal tag.id, tagging.tag_id
+  end
+
+  def test_should_set_foreign_key_on_save
+    client = Client.create! name: "fuu"
+    firm   = client.build_firm name: "baa"
+
+    firm.save
+    assert_equal firm.id, client.client_of
+  end
+
+  def test_should_set_foreign_key_on_save!
+    client = Client.create! name: "fuu"
+    firm   = client.build_firm name: "baa"
+
+    firm.save!
+    assert_equal firm.id, client.client_of
+  end
+
   def test_self_referential_belongs_to_with_counter_cache_assigning_nil
     comment = Comment.create! post: posts(:thinking), body: "fuu"
     comment.parent = nil
@@ -1352,6 +1507,30 @@ class BelongsToAssociationsTest < ActiveRecord::TestCase
     sponsor = Sponsor.create!(sponsorable: toy)
 
     assert_equal toy, sponsor.reload.sponsorable
+  end
+
+  class SponsorWithTouchInverse < Sponsor
+    belongs_to :sponsorable, polymorphic: true, inverse_of: :sponsors, touch: true
+  end
+
+  def test_destroying_polymorphic_child_with_unloaded_parent_and_touch_is_possible_with_has_many_inversing
+    with_has_many_inversing do
+      toy     = Toy.create!
+      sponsor = toy.sponsors.create!
+
+      assert_difference "Sponsor.count", -1 do
+        SponsorWithTouchInverse.find(sponsor.id).destroy
+      end
+    end
+  end
+
+  def test_polymorphic_with_false
+    assert_nothing_raised do
+      Class.new(ActiveRecord::Base) do
+        def self.name; "Post"; end
+        belongs_to :category, polymorphic: false
+      end
+    end
   end
 
   test "stale tracking doesn't care about the type" do
@@ -1403,6 +1582,169 @@ class BelongsToAssociationsTest < ActiveRecord::TestCase
       end
     end
   end
+
+  test "assigning an association doesn't result in duplicate objects" do
+    post = Post.create!(title: "title", body: "body")
+    post.comments = [post.comments.build(body: "body")]
+    post.save!
+
+    assert_equal 1, post.comments.size
+    assert_equal 1, Comment.where(post_id: post.id).count
+    assert_equal post.id, Comment.last.post.id
+  end
+
+  test "tracking change from one persisted record to another" do
+    node = nodes(:child_one_of_a)
+    assert_not_nil node.parent
+    assert_not node.parent_changed?
+    assert_not node.parent_previously_changed?
+
+    node.parent = nodes(:grandparent)
+    assert node.parent_changed?
+    assert_not node.parent_previously_changed?
+
+    node.save!
+    assert_not node.parent_changed?
+    assert node.parent_previously_changed?
+  end
+
+  test "tracking change from persisted record to new record" do
+    node = nodes(:child_one_of_a)
+    assert_not_nil node.parent
+    assert_not node.parent_changed?
+    assert_not node.parent_previously_changed?
+
+    node.parent = Node.new(tree: node.tree, parent: nodes(:parent_a), name: "Child three")
+    assert node.parent_changed?
+    assert_not node.parent_previously_changed?
+
+    node.save!
+    assert_not node.parent_changed?
+    assert node.parent_previously_changed?
+  end
+
+  test "tracking change from persisted record to nil" do
+    node = nodes(:child_one_of_a)
+    assert_not_nil node.parent
+    assert_not node.parent_changed?
+    assert_not node.parent_previously_changed?
+
+    node.parent = nil
+    assert node.parent_changed?
+    assert_not node.parent_previously_changed?
+
+    node.save!
+    assert_not node.parent_changed?
+    assert node.parent_previously_changed?
+  end
+
+  test "tracking change from nil to persisted record" do
+    node = nodes(:grandparent)
+    assert_nil node.parent
+    assert_not node.parent_changed?
+    assert_not node.parent_previously_changed?
+
+    node.parent = Node.create!(tree: node.tree, name: "Great-grandparent")
+    assert node.parent_changed?
+    assert_not node.parent_previously_changed?
+
+    node.save!
+    assert_not node.parent_changed?
+    assert node.parent_previously_changed?
+  end
+
+  test "tracking change from nil to new record" do
+    node = nodes(:grandparent)
+    assert_nil node.parent
+    assert_not node.parent_changed?
+    assert_not node.parent_previously_changed?
+
+    node.parent = Node.new(tree: node.tree, name: "Great-grandparent")
+    assert node.parent_changed?
+    assert_not node.parent_previously_changed?
+
+    node.save!
+    assert_not node.parent_changed?
+    assert node.parent_previously_changed?
+  end
+
+  test "tracking polymorphic changes" do
+    comment = comments(:greetings)
+    assert_nil comment.author
+    assert_not comment.author_changed?
+    assert_not comment.author_previously_changed?
+
+    comment.author = authors(:david)
+    assert comment.author_changed?
+
+    comment.save!
+    assert_not comment.author_changed?
+    assert comment.author_previously_changed?
+
+    assert_equal authors(:david).id, companies(:first_firm).id
+
+    comment.author = companies(:first_firm)
+    assert comment.author_changed?
+
+    comment.save!
+    assert_not comment.author_changed?
+    assert comment.author_previously_changed?
+  end
+
+  class ShipRequired < ActiveRecord::Base
+    self.table_name = "ships"
+    belongs_to :developer, required: true
+  end
+
+  test "runs parent presence check if parent changed or nil" do
+    david = developers(:david)
+    jamis = developers(:jamis)
+
+    ship = ShipRequired.create!(name: "Medusa", developer: david)
+    assert_equal david, ship.developer
+
+    assert_queries(2) do # UPDATE and SELECT to check developer presence
+      ship.update!(developer_id: jamis.id)
+    end
+
+    ship.update_column(:developer_id, nil)
+    ship.reload
+
+    assert_queries(2) do # UPDATE and SELECT to check developer presence
+      ship.update!(developer_id: david.id)
+    end
+  end
+
+  test "skips parent presence check if parent has not changed" do
+    david = developers(:david)
+    ship = ShipRequired.create!(name: "Medusa", developer: david)
+    ship.reload # unload developer association
+
+    assert_queries(1) do # UPDATE only, no SELECT to check developer presence
+      ship.update!(name: "Leviathan")
+    end
+  end
+
+  test "runs parent presence check if parent has not changed and belongs_to_required_validates_foreign_key is set" do
+    original_value = ActiveRecord.belongs_to_required_validates_foreign_key
+    ActiveRecord.belongs_to_required_validates_foreign_key = true
+
+    model = Class.new(ActiveRecord::Base) do
+      self.table_name = "ships"
+      def self.name; "Temp"; end
+      belongs_to :developer, required: true
+    end
+
+    david = developers(:david)
+    ship = model.create!(name: "Medusa", developer: david)
+    ship.reload # unload developer association
+
+    assert_queries(2) do # UPDATE and SELECT to check developer presence
+      ship.update!(name: "Leviathan")
+    end
+  ensure
+    ActiveRecord.belongs_to_required_validates_foreign_key = original_value
+  end
 end
 
 class BelongsToWithForeignKeyTest < ActiveRecord::TestCase
@@ -1413,5 +1755,8 @@ class BelongsToWithForeignKeyTest < ActiveRecord::TestCase
     author = Author.create! name: "Author", author_address_id: address.id
 
     author.destroy!
+
+    assert_not AuthorAddress.exists?(address.id)
+    assert_not Author.exists?(author.id)
   end
 end

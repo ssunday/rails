@@ -97,7 +97,7 @@ module ActionView
             options["name"] = options.fetch("name") { tag_name(options["multiple"], index) }
 
             if generate_ids?
-              options["id"] = options.fetch("id") { tag_id(index) }
+              options["id"] = options.fetch("id") { tag_id(index, options.delete("namespace")) }
               if namespace = options.delete("namespace")
                 options["id"] = options["id"] ? "#{namespace}_#{options['id']}" : namespace
               end
@@ -105,19 +105,11 @@ module ActionView
           end
 
           def tag_name(multiple = false, index = nil)
-            # a little duplication to construct fewer strings
-            case
-            when @object_name.empty?
-              "#{sanitized_method_name}#{multiple ? "[]" : ""}"
-            when index
-              "#{@object_name}[#{index}][#{sanitized_method_name}]#{multiple ? "[]" : ""}"
-            else
-              "#{@object_name}[#{sanitized_method_name}]#{multiple ? "[]" : ""}"
-            end
+            @template_object.field_name(@object_name, sanitized_method_name, multiple: multiple, index: index)
           end
 
-          def tag_id(index = nil)
-            @template_object.field_id(@object_name, @method_name, index: index)
+          def tag_id(index = nil, namespace = nil)
+            @template_object.field_id(@object_name, @method_name, index: index, namespace: namespace)
           end
 
           def sanitized_method_name
@@ -130,6 +122,10 @@ module ActionView
 
           def select_content_tag(option_tags, options, html_options)
             html_options = html_options.stringify_keys
+            [:required, :multiple, :size].each do |prop|
+              html_options[prop.to_s] = options.delete(prop) if options.key?(prop) && !html_options.key?(prop.to_s)
+            end
+
             add_default_name_and_id(html_options)
 
             if placeholder_required?(html_options)
@@ -141,7 +137,7 @@ module ActionView
             select = content_tag("select", add_options(option_tags, options, value), html_options)
 
             if html_options["multiple"] && options.fetch(:include_hidden, true)
-              tag("input", disabled: html_options["disabled"], name: html_options["name"], type: "hidden", value: "") + select
+              tag("input", disabled: html_options["disabled"], name: html_options["name"], type: "hidden", value: "", autocomplete: "off") + select
             else
               select
             end

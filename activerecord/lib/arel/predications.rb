@@ -39,7 +39,11 @@ module Arel # :nodoc: all
         self.in([])
       elsif open_ended?(other.begin)
         if open_ended?(other.end)
-          not_in([])
+          if infinity?(other.begin) == 1 || infinity?(other.end) == -1
+            self.in([])
+          else
+            not_in([])
+          end
         elsif other.exclude_end?
           lt(other.end)
         else
@@ -52,7 +56,7 @@ module Arel # :nodoc: all
       else
         left = quoted_node(other.begin)
         right = quoted_node(other.end)
-        Nodes::Between.new(self, left.and(right))
+        Nodes::Between.new(self, Nodes::And.new([left, right]))
       end
     end
 
@@ -80,7 +84,11 @@ module Arel # :nodoc: all
         not_in([])
       elsif open_ended?(other.begin)
         if open_ended?(other.end)
-          self.in([])
+          if infinity?(other.begin) == 1 || infinity?(other.end) == -1
+            not_in([])
+          else
+            self.in([])
+          end
         elsif other.exclude_end?
           gteq(other.end)
         else
@@ -207,11 +215,11 @@ module Arel # :nodoc: all
     end
 
     def contains(other)
-      Arel::Nodes::Contains.new(self, other)
+      Arel::Nodes::Contains.new self, quoted_node(other)
     end
 
     def overlaps(other)
-      Arel::Nodes::Overlaps.new(self, other)
+      Arel::Nodes::Overlaps.new self, quoted_node(other)
     end
 
     def quoted_array(others)

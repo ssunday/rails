@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-module ActiveRecord #:nodoc:
+module ActiveRecord # :nodoc:
   # = Active Record \Serialization
   module Serialization
     extend ActiveSupport::Concern
@@ -20,5 +20,10 @@ module ActiveRecord #:nodoc:
 
       super(options)
     end
+
+    private
+      def attribute_names_for_serialization
+        attribute_names
+      end
   end
 end

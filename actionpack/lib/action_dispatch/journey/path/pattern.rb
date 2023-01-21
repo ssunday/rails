@@ -4,15 +4,16 @@ module ActionDispatch
   module Journey # :nodoc:
     module Path # :nodoc:
       class Pattern # :nodoc:
-        attr_reader :spec, :requirements, :anchored
+        attr_reader :ast, :names, :requirements, :anchored, :spec
 
         def initialize(ast, requirements, separators, anchored)
-          @spec         = ast
+          @ast          = ast
+          @spec         = ast.root
           @requirements = requirements
           @separators   = separators
           @anchored     = anchored
 
-          @names          = nil
+          @names          = ast.names
           @optional_names = nil
           @required_names = nil
           @re             = nil
@@ -27,20 +28,28 @@ module ActionDispatch
           required_names
           offsets
           to_regexp
-          nil
+          @ast = nil
         end
 
-        def ast
-          @spec.find_all(&:symbol?).each do |node|
-            re = @requirements[node.to_sym]
-            node.regexp = re if re
-          end
+        def requirements_anchored?
+          # each required param must not be surrounded by a literal, otherwise it isn't simple to chunk-match the url piecemeal
+          terminals = ast.terminals
 
-          @spec
-        end
+          terminals.each_with_index { |s, index|
+            next if index < 1
+            next if s.type == :DOT || s.type == :SLASH
 
-        def names
-          @names ||= spec.find_all(&:symbol?).map(&:name)
+            back = terminals[index - 1]
+            fwd = terminals[index + 1]
+
+            # we also don't support this yet, constraints must be regexps
+            return false if s.symbol? && s.regexp.is_a?(Array)
+
+            return false if back.literal?
+            return false if !fwd.nil? && fwd.literal?
+          }
+
+          true
         end
 
         def required_names
@@ -174,22 +183,22 @@ module ActionDispatch
           end
 
           def offsets
-            return @offsets if @offsets
+            @offsets ||= begin
+              offsets = [0]
 
-            @offsets = [0]
+              spec.find_all(&:symbol?).each do |node|
+                node = node.to_sym
 
-            spec.find_all(&:symbol?).each do |node|
-              node = node.to_sym
-
-              if @requirements.key?(node)
-                re = /#{Regexp.union(@requirements[node])}|/
-                @offsets.push((re.match("").length - 1) + @offsets.last)
-              else
-                @offsets << @offsets.last
+                if @requirements.key?(node)
+                  re = /#{Regexp.union(@requirements[node])}|/
+                  offsets.push((re.match("").length - 1) + offsets.last)
+                else
+                  offsets << offsets.last
+                end
               end
-            end
 
-            @offsets
+              offsets
+            end
           end
       end
     end

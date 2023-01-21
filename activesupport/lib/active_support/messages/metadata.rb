@@ -3,8 +3,8 @@
 require "time"
 
 module ActiveSupport
-  module Messages #:nodoc:
-    class Metadata #:nodoc:
+  module Messages # :nodoc:
+    class Metadata # :nodoc:
       def initialize(message, expires_at = nil, purpose = nil)
         @message, @purpose = message, purpose
         @expires_at = expires_at.is_a?(String) ? parse_expires_at(expires_at) : expires_at
@@ -37,9 +37,12 @@ module ActiveSupport
           end
 
           def extract_metadata(message)
-            data = JSON.decode(message) rescue nil
+            begin
+              data = JSON.decode(message) if message.start_with?('{"_rails":')
+            rescue ::JSON::JSONError
+            end
 
-            if data.is_a?(Hash) && data.key?("_rails")
+            if data
               new(decode(data["_rails"]["message"]), data["_rails"]["exp"], data["_rails"]["pur"])
             else
               new(message)

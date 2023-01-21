@@ -14,16 +14,43 @@ module ActiveRecord
           raise "You cannot include Dirty after Timestamp"
         end
 
-        class_attribute :partial_writes, instance_writer: false, default: true
+        class_attribute :partial_updates, instance_writer: false, default: true
+        class_attribute :partial_inserts, instance_writer: false, default: true
 
         # Attribute methods for "changed in last call to save?"
-        attribute_method_affix(prefix: "saved_change_to_", suffix: "?")
-        attribute_method_prefix("saved_change_to_")
-        attribute_method_suffix("_before_last_save")
+        attribute_method_affix(prefix: "saved_change_to_", suffix: "?", parameters: "**options")
+        attribute_method_prefix("saved_change_to_", parameters: false)
+        attribute_method_suffix("_before_last_save", parameters: false)
 
         # Attribute methods for "will change if I call save?"
-        attribute_method_affix(prefix: "will_save_change_to_", suffix: "?")
-        attribute_method_suffix("_change_to_be_saved", "_in_database")
+        attribute_method_affix(prefix: "will_save_change_to_", suffix: "?", parameters: "**options")
+        attribute_method_suffix("_change_to_be_saved", "_in_database", parameters: false)
+      end
+
+      module ClassMethods
+        def partial_writes
+          ActiveRecord.deprecator.warn(<<-MSG.squish)
+            ActiveRecord::Base.partial_writes is deprecated and will be removed in Rails 7.1.
+            Use `partial_updates` and `partial_inserts` instead.
+          MSG
+          partial_updates && partial_inserts
+        end
+
+        def partial_writes?
+          ActiveRecord.deprecator.warn(<<-MSG.squish)
+            `ActiveRecord::Base.partial_writes?` is deprecated and will be removed in Rails 7.1.
+            Use `partial_updates?` and `partial_inserts?` instead.
+          MSG
+          partial_updates? && partial_inserts?
+        end
+
+        def partial_writes=(value)
+          ActiveRecord.deprecator.warn(<<-MSG.squish)
+            `ActiveRecord::Base.partial_writes=` is deprecated and will be removed in Rails 7.1.
+            Use `partial_updates=` and `partial_inserts=` instead.
+          MSG
+          self.partial_updates = self.partial_inserts = value
+        end
       end
 
       # <tt>reload</tt> the record and clears changed attributes.
@@ -156,10 +183,12 @@ module ActiveRecord
       end
 
       private
-        def write_attribute_without_type_cast(attr_name, value)
-          result = super
-          clear_attribute_change(attr_name)
-          result
+        def init_internals
+          super
+          @mutations_before_last_save = nil
+          @mutations_from_database = nil
+          @_touch_attr_names = nil
+          @_skip_dirty_tracking = nil
         end
 
         def _touch_row(attribute_names, time)
@@ -191,20 +220,32 @@ module ActiveRecord
           @_touch_attr_names, @_skip_dirty_tracking = nil, nil
         end
 
-        def _update_record(attribute_names = attribute_names_for_partial_writes)
+        def _update_record(attribute_names = attribute_names_for_partial_updates)
           affected_rows = super
           changes_applied
           affected_rows
         end
 
-        def _create_record(attribute_names = attribute_names_for_partial_writes)
+        def _create_record(attribute_names = attribute_names_for_partial_inserts)
           id = super
           changes_applied
           id
         end
 
-        def attribute_names_for_partial_writes
-          partial_writes? ? changed_attribute_names_to_save : attribute_names
+        def attribute_names_for_partial_updates
+          partial_updates? ? changed_attribute_names_to_save : attribute_names
+        end
+
+        def attribute_names_for_partial_inserts
+          if partial_inserts?
+            changed_attribute_names_to_save
+          else
+            attribute_names.reject do |attr_name|
+              if column_for_attribute(attr_name).default_function
+                !attribute_changed?(attr_name)
+              end
+            end
+          end
         end
     end
   end

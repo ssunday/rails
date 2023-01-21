@@ -42,11 +42,8 @@ module ActionDispatch
         HTTP_NEGOTIATE HTTP_PRAGMA HTTP_CLIENT_IP
         HTTP_X_FORWARDED_FOR HTTP_ORIGIN HTTP_VERSION
         HTTP_X_CSRF_TOKEN HTTP_X_REQUEST_ID HTTP_X_FORWARDED_HOST
-        SERVER_ADDR
         ].freeze
 
-    # TODO: Remove SERVER_ADDR when we remove support to Rack 2.1.
-    # See https://github.com/rack/rack/commit/c173b188d81ee437b588c1e046a1c9f031dea550
     ENV_METHODS.each do |env|
       class_eval <<-METHOD, __FILE__, __LINE__ + 1
         # frozen_string_literal: true
@@ -90,7 +87,7 @@ module ActionDispatch
         controller_param = name.underscore
         const_name = controller_param.camelize << "Controller"
         begin
-          ActiveSupport::Dependencies.constantize(const_name)
+          const_name.constantize
         rescue NameError => error
           if error.missing_name == const_name || const_name.start_with?("#{error.missing_name}::")
             raise MissingController.new(error.message, error.name)
@@ -110,22 +107,21 @@ module ActionDispatch
       has_header? key
     end
 
-    # List of HTTP request methods from the following RFCs:
-    # Hypertext Transfer Protocol -- HTTP/1.1 (https://www.ietf.org/rfc/rfc2616.txt)
-    # HTTP Extensions for Distributed Authoring -- WEBDAV (https://www.ietf.org/rfc/rfc2518.txt)
-    # Versioning Extensions to WebDAV (https://www.ietf.org/rfc/rfc3253.txt)
-    # Ordered Collections Protocol (WebDAV) (https://www.ietf.org/rfc/rfc3648.txt)
-    # Web Distributed Authoring and Versioning (WebDAV) Access Control Protocol (https://www.ietf.org/rfc/rfc3744.txt)
-    # Web Distributed Authoring and Versioning (WebDAV) SEARCH (https://www.ietf.org/rfc/rfc5323.txt)
-    # Calendar Extensions to WebDAV (https://www.ietf.org/rfc/rfc4791.txt)
-    # PATCH Method for HTTP (https://www.ietf.org/rfc/rfc5789.txt)
+    # HTTP methods from {RFC 2616: Hypertext Transfer Protocol -- HTTP/1.1}[https://www.ietf.org/rfc/rfc2616.txt]
     RFC2616 = %w(OPTIONS GET HEAD POST PUT DELETE TRACE CONNECT)
+    # HTTP methods from {RFC 2518: HTTP Extensions for Distributed Authoring -- WEBDAV}[https://www.ietf.org/rfc/rfc2518.txt]
     RFC2518 = %w(PROPFIND PROPPATCH MKCOL COPY MOVE LOCK UNLOCK)
+    # HTTP methods from {RFC 3253: Versioning Extensions to WebDAV}[https://www.ietf.org/rfc/rfc3253.txt]
     RFC3253 = %w(VERSION-CONTROL REPORT CHECKOUT CHECKIN UNCHECKOUT MKWORKSPACE UPDATE LABEL MERGE BASELINE-CONTROL MKACTIVITY)
+    # HTTP methods from {RFC 3648: WebDAV Ordered Collections Protocol}[https://www.ietf.org/rfc/rfc3648.txt]
     RFC3648 = %w(ORDERPATCH)
+    # HTTP methods from {RFC 3744: WebDAV Access Control Protocol}[https://www.ietf.org/rfc/rfc3744.txt]
     RFC3744 = %w(ACL)
+    # HTTP methods from {RFC 5323: WebDAV SEARCH}[https://www.ietf.org/rfc/rfc5323.txt]
     RFC5323 = %w(SEARCH)
+    # HTTP methods from {RFC 4791: Calendaring Extensions to WebDAV}[https://www.ietf.org/rfc/rfc4791.txt]
     RFC4791 = %w(MKCALENDAR)
+    # HTTP methods from {RFC 5789: PATCH Method for HTTP}[https://www.ietf.org/rfc/rfc5789.txt]
     RFC5789 = %w(PATCH)
 
     HTTP_METHODS = RFC2616 + RFC2518 + RFC3253 + RFC3648 + RFC3744 + RFC5323 + RFC4791 + RFC5789
@@ -165,7 +161,7 @@ module ActionDispatch
       set_header(routes.env_key, name.dup)
     end
 
-    def request_method=(request_method) #:nodoc:
+    def request_method=(request_method) # :nodoc:
       if check_method(request_method)
         @request_method = set_header("REQUEST_METHOD", request_method)
       end
@@ -198,9 +194,20 @@ module ActionDispatch
     # Returns the original value of the environment's REQUEST_METHOD,
     # even if it was overridden by middleware. See #request_method for
     # more information.
-    def method
-      @method ||= check_method(get_header("rack.methodoverride.original_method") || get_header("REQUEST_METHOD"))
+    #
+    # For debugging purposes, when called with arguments this method will
+    # fallback to Object#method
+    def method(*args)
+      if args.empty?
+        @method ||= check_method(
+          get_header("rack.methodoverride.original_method") ||
+          get_header("REQUEST_METHOD")
+        )
+      else
+        super
+      end
     end
+    ruby2_keywords(:method)
 
     # Returns a symbol form of the #method.
     def method_symbol
@@ -266,7 +273,7 @@ module ActionDispatch
     #    # get "/articles"
     #    request.media_type # => "application/x-www-form-urlencoded"
     def media_type
-      content_mime_type.to_s
+      content_mime_type&.to_s
     end
 
     # Returns the content length of the request as an integer.
@@ -274,7 +281,7 @@ module ActionDispatch
       super.to_i
     end
 
-    # Returns true if the "X-Requested-With" header contains "XMLHttpRequest"
+    # Returns true if the +X-Requested-With+ header contains "XMLHttpRequest"
     # (case-insensitive), which may need to be manually added depending on the
     # choice of JavaScript libraries and frameworks.
     def xml_http_request?
@@ -300,9 +307,9 @@ module ActionDispatch
 
     ACTION_DISPATCH_REQUEST_ID = "action_dispatch.request_id" # :nodoc:
 
-    # Returns the unique request id, which is based on either the X-Request-Id header that can
-    # be generated by a firewall, load balancer, or web server or by the RequestId middleware
-    # (which sets the action_dispatch.request_id environment variable).
+    # Returns the unique request id, which is based on either the +X-Request-Id+ header that can
+    # be generated by a firewall, load balancer, or web server, or by the RequestId middleware
+    # (which sets the +action_dispatch.request_id+ environment variable).
     #
     # This unique ID is useful for tracing a request from end-to-end as part of logging or debugging.
     # This relies on the Rack variable set by the ActionDispatch::RequestId middleware.
@@ -344,32 +351,27 @@ module ActionDispatch
     end
 
     # Determine whether the request body contains form-data by checking
-    # the request Content-Type for one of the media-types:
-    # "application/x-www-form-urlencoded" or "multipart/form-data". The
+    # the request +Content-Type+ for one of the media-types:
+    # +application/x-www-form-urlencoded+ or +multipart/form-data+. The
     # list of form-data media types can be modified through the
     # +FORM_DATA_MEDIA_TYPES+ array.
     #
     # A request body is not assumed to contain form-data when no
-    # Content-Type header is provided and the request_method is POST.
+    # +Content-Type+ header is provided and the request_method is POST.
     def form_data?
       FORM_DATA_MEDIA_TYPES.include?(media_type)
     end
 
-    def body_stream #:nodoc:
+    def body_stream # :nodoc:
       get_header("rack.input")
     end
 
-    # TODO This should be broken apart into AD::Request::Session and probably
-    # be included by the session middleware.
     def reset_session
-      if session && session.respond_to?(:destroy)
-        session.destroy
-      else
-        self.session = {}
-      end
+      session.destroy
+      reset_csrf_token
     end
 
-    def session=(session) #:nodoc:
+    def session=(session) # :nodoc:
       Session.set self, session
     end
 
@@ -388,7 +390,7 @@ module ActionDispatch
         Request::Utils.check_param_encoding(rack_query_params)
         set_header k, Request::Utils.normalize_encode_params(rack_query_params)
       end
-    rescue Rack::Utils::ParameterTypeError, Rack::Utils::InvalidParameterError => e
+    rescue Rack::Utils::ParameterTypeError, Rack::Utils::InvalidParameterError, Rack::QueryParser::ParamsTooDeepError => e
       raise ActionController::BadRequest.new("Invalid query parameters: #{e.message}")
     end
     alias :query_parameters :GET
@@ -403,7 +405,7 @@ module ActionDispatch
         Request::Utils.check_param_encoding(pr)
         self.request_parameters = Request::Utils.normalize_encode_params(pr)
       end
-    rescue Rack::Utils::ParameterTypeError, Rack::Utils::InvalidParameterError => e
+    rescue Rack::Utils::ParameterTypeError, Rack::Utils::InvalidParameterError, Rack::QueryParser::ParamsTooDeepError, EOFError => e
       raise ActionController::BadRequest.new("Invalid request parameters: #{e.message}")
     end
     alias :request_parameters :POST
@@ -434,18 +436,29 @@ module ActionDispatch
     def commit_flash
     end
 
-    def ssl?
-      super || scheme == "wss"
-    end
-
     def inspect # :nodoc:
       "#<#{self.class.name} #{method} #{original_url.dump} for #{remote_ip}>"
     end
 
+    def reset_csrf_token
+      controller_instance.reset_csrf_token(self) if controller_instance.respond_to?(:reset_csrf_token)
+    end
+
+    def commit_csrf_token
+      controller_instance.commit_csrf_token(self) if controller_instance.respond_to?(:commit_csrf_token)
+    end
+
     private
       def check_method(name)
-        HTTP_METHOD_LOOKUP[name] || raise(ActionController::UnknownHttpMethod, "#{name}, accepted HTTP methods are #{HTTP_METHODS[0...-1].join(', ')}, and #{HTTP_METHODS[-1]}")
+        if name
+          HTTP_METHOD_LOOKUP[name] || raise(ActionController::UnknownHttpMethod, "#{name}, accepted HTTP methods are #{HTTP_METHODS[0...-1].join(', ')}, and #{HTTP_METHODS[-1]}")
+        end
+
         name
+      end
+
+      def default_session
+        Session.disabled(self)
       end
   end
 end

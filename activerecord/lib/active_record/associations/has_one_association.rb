@@ -3,7 +3,7 @@
 module ActiveRecord
   module Associations
     # = Active Record Has One Association
-    class HasOneAssociation < SingularAssociation #:nodoc:
+    class HasOneAssociation < SingularAssociation # :nodoc:
       include ForeignAssociation
 
       def handle_dependency
@@ -70,7 +70,7 @@ module ActiveRecord
                 if save && !record.save
                   nullify_owner_attributes(record)
                   set_owner_attributes(target) if target
-                  raise RecordNotSaved, "Failed to save the new associated #{reflection.name}."
+                  raise RecordNotSaved.new("Failed to save the new associated #{reflection.name}.", record)
                 end
               end
             end
@@ -85,6 +85,10 @@ module ActiveRecord
         # updated within replace.
         def set_new_record(record)
           replace(record, false)
+        end
+
+        def replace_keys(record, force: false)
+          # Has one association doesn't have foreign keys to replace.
         end
 
         def remove_target!(method)
@@ -102,8 +106,11 @@ module ActiveRecord
 
             if target.persisted? && owner.persisted? && !target.save
               set_owner_attributes(target)
-              raise RecordNotSaved, "Failed to remove the existing associated #{reflection.name}. " \
-                                    "The record failed to save after its foreign key was set to nil."
+              raise RecordNotSaved.new(
+                "Failed to remove the existing associated #{reflection.name}. " \
+                "The record failed to save after its foreign key was set to nil.",
+                target
+              )
             end
           end
         end
@@ -112,9 +119,9 @@ module ActiveRecord
           record[reflection.foreign_key] = nil
         end
 
-        def transaction_if(value)
+        def transaction_if(value, &block)
           if value
-            reflection.klass.transaction { yield }
+            reflection.klass.transaction(&block)
           else
             yield
           end
@@ -122,7 +129,7 @@ module ActiveRecord
 
         def _create_record(attributes, raise_error = false, &block)
           unless owner.persisted?
-            raise ActiveRecord::RecordNotSaved, "You cannot call create unless the parent is saved"
+            raise ActiveRecord::RecordNotSaved.new("You cannot call create unless the parent is saved", owner)
           end
 
           super

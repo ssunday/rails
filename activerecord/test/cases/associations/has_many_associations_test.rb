@@ -40,6 +40,7 @@ require "models/subscriber"
 require "models/subscription"
 require "models/zine"
 require "models/interest"
+require "models/human"
 
 class HasManyAssociationsTestForReorderWithJoinDependency < ActiveRecord::TestCase
   fixtures :authors, :author_addresses, :posts, :comments
@@ -115,7 +116,7 @@ class HasManyAssociationsTest < ActiveRecord::TestCase
   fixtures :accounts, :categories, :companies, :developers, :projects,
            :developers_projects, :topics, :authors, :author_addresses, :comments,
            :posts, :readers, :taggings, :cars, :tags,
-           :categorizations, :zines, :interests
+           :categorizations, :zines, :interests, :humans
 
   def setup
     Client.destroyed_client_ids.clear
@@ -374,14 +375,58 @@ class HasManyAssociationsTest < ActiveRecord::TestCase
     assert_raise(ActiveRecord::SubclassNotFound) { firm.companies.build(type: "Account") }
   end
 
-  test "building the association with an array" do
+  test "build the association with an array" do
     speedometer = Speedometer.new(speedometer_id: "a")
     data = [{ name: "first" }, { name: "second" }]
-    speedometer.minivans.build(data)
+    speedometer.minivans.where(color: "blue").build(data)
 
     assert_equal 2, speedometer.minivans.size
     assert speedometer.save
-    assert_equal ["first", "second"], speedometer.reload.minivans.map(&:name)
+
+    speedometer.reload
+
+    assert_equal ["first", "second"], speedometer.minivans.map(&:name)
+    assert_equal ["blue", "blue"], speedometer.minivans.map(&:color)
+  end
+
+  test "new the association with an array" do
+    speedometer = Speedometer.new(speedometer_id: "a")
+    data = [{ name: "first" }, { name: "second" }]
+    speedometer.minivans.where(color: "blue").new(data)
+
+    assert_equal 2, speedometer.minivans.size
+    assert speedometer.save
+
+    speedometer.reload
+
+    assert_equal ["first", "second"], speedometer.minivans.map(&:name)
+    assert_equal ["blue", "blue"], speedometer.minivans.map(&:color)
+  end
+
+  test "create the association with an array" do
+    speedometer = Speedometer.create!(speedometer_id: "a")
+    data = [{ name: "first" }, { name: "second" }]
+    speedometer.minivans.where(color: "blue").create(data)
+
+    assert_equal 2, speedometer.minivans.size
+
+    speedometer.reload
+
+    assert_equal ["first", "second"], speedometer.minivans.map(&:name)
+    assert_equal ["blue", "blue"], speedometer.minivans.map(&:color)
+  end
+
+  test "create! the association with an array" do
+    speedometer = Speedometer.create!(speedometer_id: "a")
+    data = [{ name: "first" }, { name: "second" }]
+    speedometer.minivans.where(color: "blue").create!(data)
+
+    assert_equal 2, speedometer.minivans.size
+
+    speedometer.reload
+
+    assert_equal ["first", "second"], speedometer.minivans.map(&:name)
+    assert_equal ["blue", "blue"], speedometer.minivans.map(&:color)
   end
 
   def test_association_keys_bypass_attribute_protection
@@ -572,7 +617,7 @@ class HasManyAssociationsTest < ActiveRecord::TestCase
     person.first_name = "Naruto"
     person.references << Reference.new
     person.save!
-    assert_equal 1, person.references.update_all(favourite: true)
+    assert_equal 1, person.references.update_all(favorite: true)
   end
 
   def test_exists_respects_association_scope
@@ -723,9 +768,9 @@ class HasManyAssociationsTest < ActiveRecord::TestCase
     assert_equal firm.clients.count, firm.clients.update_all(description: "Great!")
   end
 
-  def test_belongs_to_sanity
+  def test_belongs_to_with_new_object
     c = Client.new
-    assert_nil c.firm, "belongs_to failed sanity check on new object"
+    assert_nil c.firm, "belongs_to failed on new object"
   end
 
   def test_find_ids
@@ -990,21 +1035,23 @@ class HasManyAssociationsTest < ActiveRecord::TestCase
   end
 
   def test_create_with_bang_on_has_many_when_parent_is_new_raises
+    firm = Firm.new
     error = assert_raise(ActiveRecord::RecordNotSaved) do
-      firm = Firm.new
       firm.plain_clients.create! name: "Whoever"
     end
 
     assert_equal "You cannot call create unless the parent is saved", error.message
+    assert_equal firm, error.record
   end
 
   def test_regular_create_on_has_many_when_parent_is_new_raises
+    firm = Firm.new
     error = assert_raise(ActiveRecord::RecordNotSaved) do
-      firm = Firm.new
       firm.plain_clients.create name: "Whoever"
     end
 
     assert_equal "You cannot call create unless the parent is saved", error.message
+    assert_equal firm, error.record
   end
 
   def test_create_with_bang_on_has_many_raises_when_record_not_saved
@@ -1015,11 +1062,13 @@ class HasManyAssociationsTest < ActiveRecord::TestCase
   end
 
   def test_create_with_bang_on_habtm_when_parent_is_new_raises
+    developer = Developer.new("name" => "Aredridel")
     error = assert_raise(ActiveRecord::RecordNotSaved) do
-      Developer.new("name" => "Aredridel").projects.create!
+      developer.projects.create!
     end
 
     assert_equal "You cannot call create unless the parent is saved", error.message
+    assert_equal developer, error.record
   end
 
   def test_adding_a_mismatch_class
@@ -1391,7 +1440,7 @@ class HasManyAssociationsTest < ActiveRecord::TestCase
     assert_equal original_count, topic.reload.replies_count
   end
 
-  def test_calling_update_changing_ids_doesnt_change_counter_cache
+  def test_calling_update_changing_ids_changes_the_counter_cache
     topic1 = Topic.find(1)
     topic2 = Topic.find(3)
     original_count1 = topic1.replies.to_a.size
@@ -1407,6 +1456,24 @@ class HasManyAssociationsTest < ActiveRecord::TestCase
     reply2.update(parent_id: topic1.id)
     assert_equal original_count1, topic1.reload.replies_count
     assert_equal original_count2, topic2.reload.replies_count
+  end
+
+  def test_calling_update_changing_ids_of_inversed_association_changes_the_counter_cache
+    assert_predicate Post.reflect_on_association(:comments), :has_inverse?
+
+    post1 = Post.first
+    post2 = Post.second
+
+    original_count1 = post1.comments.count
+    original_count2 = post2.comments.count
+
+    post1.comments.first.update(post_id: post2.id)
+    assert_equal original_count1 - 1, post1.reload.comments_count
+    assert_equal original_count2 + 1, post2.reload.comments_count
+
+    post2.comments.first.update(post_id: post1.id)
+    assert_equal original_count1, post1.reload.comments_count
+    assert_equal original_count2, post2.reload.comments_count
   end
 
   def test_deleting_a_collection
@@ -2081,7 +2148,7 @@ class HasManyAssociationsTest < ActiveRecord::TestCase
 
   def test_associations_order_should_be_priority_over_throughs_order
     original = authors(:david)
-    expected = [12, 10, 9, 8, 7, 6, 5, 3, 2, 1]
+    expected = [13, 12, 10, 9, 8, 7, 6, 5, 3, 2, 1]
     assert_equal expected, original.comments_desc.map(&:id)
     preloaded = Author.includes(:comments_desc).find(original.id)
     assert_equal expected, preloaded.comments_desc.map(&:id)
@@ -2234,6 +2301,14 @@ class HasManyAssociationsTest < ActiveRecord::TestCase
     assert_no_queries { assert firm.clients.many? }
   end
 
+  def test_subsequent_calls_to_many_should_use_query
+    firm = companies(:first_firm)
+    assert_queries(2) do
+      firm.clients.many?
+      firm.clients.many?
+    end
+  end
+
   def test_calling_many_should_defer_to_collection_if_using_a_block
     firm = companies(:first_firm)
     assert_queries(1) do
@@ -2308,6 +2383,14 @@ class HasManyAssociationsTest < ActiveRecord::TestCase
     firm = companies(:first_firm)
     firm.clients.load  # force load
     assert_no_queries { assert_not firm.clients.one? }
+  end
+
+  def test_subsequent_calls_to_one_should_use_query
+    firm = companies(:first_firm)
+    assert_queries(2) do
+      firm.clients.one?
+      firm.clients.one?
+    end
   end
 
   def test_calling_one_should_defer_to_collection_if_using_a_block
@@ -2470,6 +2553,14 @@ class HasManyAssociationsTest < ActiveRecord::TestCase
 
     assert_equal [image], post.images
     assert_equal post, image.imageable
+  end
+
+  def test_joining_through_a_polymorphic_association_with_a_where_clause
+    writer   = humans(:gordon)
+    category = categories(:general)
+    TypedEssay.create! category: category, writer: writer
+
+    assert_equal 1, Category.joins(:human_writers_of_typed_essays).count
   end
 
   def test_build_with_polymorphic_has_many_does_not_allow_to_override_type_and_id
@@ -2710,7 +2801,7 @@ class HasManyAssociationsTest < ActiveRecord::TestCase
     end
 
     assert_equal [original_child], car.reload.failed_bulbs
-    assert_equal "Failed to destroy the record", error.message
+    assert_equal "Failed to destroy FailedBulb with #{FailedBulb.primary_key}=#{original_child.id}", error.message
   end
 
   test "updates counter cache when default scope is given" do
@@ -3014,6 +3105,31 @@ class HasManyAssociationsTest < ActiveRecord::TestCase
   def test_has_many_preloading_with_duplicate_records
     posts = Post.joins(:comments).preload(:comments).order(:id).to_a
     assert_equal [1, 2], posts.first.comments.map(&:id).sort
+  end
+
+  def test_has_many_association_with_same_foreign_key_name
+    assert_nothing_raised do
+      firm = Firm.find(15)
+      assert_not_nil(firm.comments.first)
+    end
+  end
+
+  def test_key_ensuring_owner_was_is_not_valid_without_dependent_option
+    error = assert_raises(ArgumentError) do
+      Class.new(ActiveRecord::Base) do
+        has_many :books, ensuring_owner_was: :destroyed?
+      end
+    end
+
+    assert_match(/Unknown key: :ensuring_owner_was/, error.message)
+  end
+
+  def test_key_ensuring_owner_was_is_valid_when_dependent_option_is_destroy_async
+    Class.new(ActiveRecord::Base) do
+      self.destroy_association_async_job = Class.new
+
+      has_many :books, dependent: :destroy_async, ensuring_owner_was: :destroyed?
+    end
   end
 
   private

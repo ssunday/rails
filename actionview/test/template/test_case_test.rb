@@ -52,8 +52,16 @@ module ActionView
       assert params.is_a? ActionController::Parameters
     end
 
+    test "exposes request" do
+      assert request.is_a? ActionDispatch::Request
+    end
+
     test "exposes view as _view for backwards compatibility" do
       assert_same _view, view
+    end
+
+    test "returns controller_name" do
+      assert_equal "test", controller_name
     end
 
     test "retrieve non existing config values" do
@@ -121,6 +129,10 @@ module ActionView
   end
 
   class HelperInclusionTest < ActionView::TestCase
+    def teardown
+      ActionController::Base.view_paths.map(&:clear_cache)
+    end
+
     module RenderHelper
       def render_from_helper
         render partial: "customer", collection: @customers

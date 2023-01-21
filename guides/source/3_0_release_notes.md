@@ -131,7 +131,7 @@ More information: - [Make Any Ruby Object Feel Like ActiveRecord](http://yehudak
 
 ### Controller Abstraction
 
-Another big part of decoupling the core components was creating a base superclass that is separated from the notions of HTTP in order to handle rendering of views etc. This creation of `AbstractController` allowed `ActionController` and `ActionMailer` to be greatly simplified with common code removed from all these libraries and put into Abstract Controller.
+Another big part of decoupling the core components was creating a base superclass that is separated from the notions of HTTP in order to handle rendering of views, etc. This creation of `AbstractController` allowed `ActionController` and `ActionMailer` to be greatly simplified with common code removed from all these libraries and put into Abstract Controller.
 
 More Information: - [Rails Edge Architecture](http://yehudakatz.com/2009/06/11/rails-edge-architecture/)
 
@@ -338,7 +338,7 @@ Helpers that do something else, like `cache` or `content_for`, are not affected 
 #### Other Changes
 
 * You no longer need to call `h(string)` to escape HTML output, it is on by default in all view templates. If you want the unescaped string, call `raw(string)`.
-* Helpers now output HTML 5 by default.
+* Helpers now output HTML5 by default.
 * Form label helper now pulls values from I18n with a single value, so `f.label :name` will pull the `:name` translation.
 * I18n select label on should now be :en.helpers.select instead of :en.support.select.
 * You no longer need to place a minus sign at the end of a Ruby interpolation inside an ERB template to remove the trailing carriage return in the HTML output.

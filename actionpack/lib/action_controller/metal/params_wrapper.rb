@@ -9,11 +9,14 @@ module ActionController
   # Wraps the parameters hash into a nested hash. This will allow clients to
   # submit requests without having to specify any root elements.
   #
-  # This functionality is enabled in +config/initializers/wrap_parameters.rb+
-  # and can be customized.
+  # This functionality is enabled by default for JSON, and can be customized by
+  # setting the format array:
   #
-  # You could also turn it on per controller by setting the format array to
-  # a non-empty array:
+  #     class ApplicationController < ActionController::Base
+  #       wrap_parameters format: [:json, :xml]
+  #     end
+  #
+  # You could also turn it on per controller:
   #
   #     class UsersController < ApplicationController
   #       wrap_parameters format: [:json, :xml, :url_encoded_form, :multipart_form]
@@ -68,6 +71,12 @@ module ActionController
   # will try to check if <tt>Admin::User</tt> or +User+ model exists, and use it to
   # determine the wrapper key respectively. If both models don't exist,
   # it will then fallback to use +user+ as the key.
+  #
+  # To disable this functionality for a controller:
+  #
+  #     class UsersController < ApplicationController
+  #       wrap_parameters false
+  #     end
   module ParamsWrapper
     extend ActiveSupport::Concern
 
@@ -242,14 +251,14 @@ module ActionController
       end
     end
 
-    # Performs parameters wrapping upon the request. Called automatically
-    # by the metal call stack.
-    def process_action(*)
-      _perform_parameter_wrapping if _wrapper_enabled?
-      super
-    end
-
     private
+      # Performs parameters wrapping upon the request. Called automatically
+      # by the metal call stack.
+      def process_action(*)
+        _perform_parameter_wrapping if _wrapper_enabled?
+        super
+      end
+
       # Returns the wrapper key which will be used to store wrapped parameters.
       def _wrapper_key
         _wrapper_options.name
@@ -281,7 +290,10 @@ module ActionController
         return false unless request.has_content_type?
 
         ref = request.content_mime_type.ref
+
         _wrapper_formats.include?(ref) && _wrapper_key && !request.parameters.key?(_wrapper_key)
+      rescue ActionDispatch::Http::Parameters::ParseError
+        false
       end
 
       def _perform_parameter_wrapping
@@ -295,8 +307,6 @@ module ActionController
 
         # This will display the wrapped hash in the log file.
         request.filtered_parameters.merge! wrapped_filtered_hash
-      rescue ActionDispatch::Http::Parameters::ParseError
-        # swallow parse error exception
       end
   end
 end

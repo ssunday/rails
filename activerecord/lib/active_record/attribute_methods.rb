@@ -23,7 +23,7 @@ module ActiveRecord
 
     RESTRICTED_CLASS_METHODS = %w(private public protected allocate new name parent superclass)
 
-    class GeneratedAttributeMethods < Module #:nodoc:
+    class GeneratedAttributeMethods < Module # :nodoc:
       include Mutex_m
     end
 
@@ -33,17 +33,13 @@ module ActiveRecord
           Base.instance_methods +
           Base.private_instance_methods -
           Base.superclass.instance_methods -
-          Base.superclass.private_instance_methods
+          Base.superclass.private_instance_methods +
+          %i[__id__ dup freeze frozen? hash object_id class clone]
         ).map { |m| -m.to_s }.to_set.freeze
       end
     end
 
     module ClassMethods
-      def inherited(child_class) #:nodoc:
-        child_class.initialize_generated_modules
-        super
-      end
-
       def initialize_generated_modules # :nodoc:
         @generated_attribute_methods = const_set(:GeneratedAttributeMethods, GeneratedAttributeMethods.new)
         private_constant :GeneratedAttributeMethods
@@ -97,7 +93,7 @@ module ActiveRecord
           super
         else
           # If ThisClass < ... < SomeSuperClass < ... < Base and SomeSuperClass
-          # defines its own attribute method, then we don't want to overwrite that.
+          # defines its own attribute method, then we don't want to override that.
           defined = method_defined_within?(method_name, superclass, Base) &&
             ! superclass.instance_method(method_name).owner.is_a?(GeneratedAttributeMethods)
           defined || super
@@ -186,6 +182,15 @@ module ActiveRecord
       def _has_attribute?(attr_name) # :nodoc:
         attribute_types.key?(attr_name)
       end
+
+      private
+        def inherited(child_class)
+          super
+          child_class.initialize_generated_modules
+          child_class.class_eval do
+            @attribute_names = nil
+          end
+        end
     end
 
     # A Person object with a name attribute can ask <tt>person.respond_to?(:name)</tt>,
@@ -267,9 +272,8 @@ module ActiveRecord
 
     # Returns an <tt>#inspect</tt>-like string for the value of the
     # attribute +attr_name+. String attributes are truncated up to 50
-    # characters, Date and Time attributes are returned in the
-    # <tt>:db</tt> format. Other attributes return the value of
-    # <tt>#inspect</tt> without modification.
+    # characters. Other attributes return the value of <tt>#inspect</tt>
+    # without modification.
     #
     #   person = Person.create!(name: 'David Heinemeier Hansson ' * 3)
     #
@@ -277,7 +281,7 @@ module ActiveRecord
     #   # => "\"David Heinemeier Hansson David Heinemeier Hansson ...\""
     #
     #   person.attribute_for_inspect(:created_at)
-    #   # => "\"2012-10-22 00:15:07\""
+    #   # => "\"2012-10-22 00:15:07.000000000 +0000\""
     #
     #   person.attribute_for_inspect(:tag_ids)
     #   # => "[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]"
@@ -310,37 +314,40 @@ module ActiveRecord
       !value.nil? && !(value.respond_to?(:empty?) && value.empty?)
     end
 
-    # Returns the value of the attribute identified by <tt>attr_name</tt> after it has been typecast (for example,
-    # "2004-12-12" in a date column is cast to a date object, like Date.new(2004, 12, 12)). It raises
-    # <tt>ActiveModel::MissingAttributeError</tt> if the identified attribute is missing.
-    #
-    # Note: +:id+ is always present.
+    # Returns the value of the attribute identified by +attr_name+ after it has
+    # been type cast. (For information about specific type casting behavior, see
+    # the types under ActiveModel::Type.)
     #
     #   class Person < ActiveRecord::Base
     #     belongs_to :organization
     #   end
     #
-    #   person = Person.new(name: 'Francesco', age: '22')
-    #   person[:name] # => "Francesco"
-    #   person[:age]  # => 22
+    #   person = Person.new(name: "Francesco", date_of_birth: "2004-12-12")
+    #   person[:name]            # => "Francesco"
+    #   person[:date_of_birth]   # => Date.new(2004, 12, 12)
+    #   person[:organization_id] # => nil
     #
-    #   person = Person.select('id').first
-    #   person[:name]            # => ActiveModel::MissingAttributeError: missing attribute: name
+    # Raises ActiveModel::MissingAttributeError if the attribute is missing.
+    # Note, however, that the +id+ attribute will never be considered missing.
+    #
+    #   person = Person.select(:name).first
+    #   person[:name]            # => "Francesco"
+    #   person[:date_of_birth]   # => ActiveModel::MissingAttributeError: missing attribute: date_of_birth
     #   person[:organization_id] # => ActiveModel::MissingAttributeError: missing attribute: organization_id
+    #   person[:id]              # => nil
     def [](attr_name)
       read_attribute(attr_name) { |n| missing_attribute(n, caller) }
     end
 
-    # Updates the attribute identified by <tt>attr_name</tt> with the specified +value+.
-    # (Alias for the protected #write_attribute method).
+    # Updates the attribute identified by +attr_name+ using the specified
+    # +value+. The attribute value will be type cast upon being read.
     #
     #   class Person < ActiveRecord::Base
     #   end
     #
     #   person = Person.new
-    #   person[:age] = '22'
-    #   person[:age] # => 22
-    #   person[:age].class # => Integer
+    #   person[:date_of_birth] = "2004-12-12"
+    #   person[:date_of_birth] # => Date.new(2004, 12, 12)
     def []=(attr_name, value)
       write_attribute(attr_name, value)
     end
@@ -361,10 +368,9 @@ module ActiveRecord
     #     end
     #
     #     private
-    #
-    #     def print_accessed_fields
-    #       p @posts.first.accessed_fields
-    #     end
+    #       def print_accessed_fields
+    #         p @posts.first.accessed_fields
+    #       end
     #   end
     #
     # Which allows you to quickly change your code to:
@@ -385,25 +391,26 @@ module ActiveRecord
       end
 
       def attributes_with_values(attribute_names)
-        attribute_names.index_with do |name|
-          _read_attribute(name)
-        end
+        attribute_names.index_with { |name| @attributes[name] }
       end
 
-      # Filters the primary keys and readonly attributes from the attribute names.
+      # Filters the primary keys, readonly attributes and virtual columns from the attribute names.
       def attributes_for_update(attribute_names)
         attribute_names &= self.class.column_names
         attribute_names.delete_if do |name|
-          self.class.readonly_attribute?(name)
+          self.class.readonly_attribute?(name) ||
+            self.class.counter_cache_column?(name) ||
+            column_for_attribute(name).virtual?
         end
       end
 
-      # Filters out the primary keys, from the attribute names, when the primary
+      # Filters out the virtual columns and also primary keys, from the attribute names, when the primary
       # key is to be generated (e.g. the id attribute has no value).
       def attributes_for_create(attribute_names)
         attribute_names &= self.class.column_names
         attribute_names.delete_if do |name|
-          pk_attribute?(name) && id.nil?
+          (pk_attribute?(name) && id.nil?) ||
+            column_for_attribute(name).virtual?
         end
       end
 
@@ -414,7 +421,7 @@ module ActiveRecord
           inspected_value = if value.is_a?(String) && value.length > 50
             "#{value[0, 50]}...".inspect
           elsif value.is_a?(Date) || value.is_a?(Time)
-            %("#{value.to_s(:inspect)}")
+            %("#{value.to_fs(:inspect)}")
           else
             value.inspect
           end

@@ -37,9 +37,16 @@ class EncryptedConfigurationTest < ActiveSupport::TestCase
   end
 
   test "reading configuration by key file" do
-    @credentials.write({ something: { good: true } }.to_yaml)
+    @credentials.write({ something: { good: true, bad: false, nested: { foo: "bar" } } }.to_yaml)
 
     assert @credentials.something[:good]
+    assert_not @credentials.something[:bad]
+    assert @credentials.something.good
+    assert_not @credentials.something.bad
+    assert_equal "bar", @credentials.dig(:something, :nested, :foo)
+    assert_equal "bar", @credentials.something.nested.foo
+    assert_equal [:good, :bad, :nested], @credentials.something.keys
+    assert_equal ({ good: true, bad: false, nested: { foo: "bar" } }), @credentials.something
   end
 
   test "reading comment-only configuration" do
@@ -59,11 +66,19 @@ class EncryptedConfigurationTest < ActiveSupport::TestCase
     assert_equal "things", @credentials[:new]
   end
 
-  test "raise error when writing an invalid format value" do
-    assert_raise(Psych::SyntaxError) do
-      @credentials.change do |config_file|
-        config_file.write "login: *login\n  username: dummy"
-      end
+  test "raises helpful error when loading invalid content" do
+    @credentials.write("key: value\nbad")
+
+    assert_raise(ActiveSupport::EncryptedConfiguration::InvalidContentError) do
+      @credentials.config
+    end
+  end
+
+  test "raises helpful error when validating invalid content" do
+    @credentials.write("key: value\nbad")
+
+    assert_raise(ActiveSupport::EncryptedConfiguration::InvalidContentError) do
+      @credentials.validate!
     end
   end
 

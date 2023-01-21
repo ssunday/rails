@@ -109,17 +109,17 @@ Caching is not used in the following scenarios:
 - The model uses single table inheritance
 - `find` with a list of ids, e.g.:
 
-  ```ruby
-  # not cached
-  Post.find(1, 2, 3)
-  Post.find([1,2])
-  ```
+    ```ruby
+    # not cached
+    Post.find(1, 2, 3)
+    Post.find([1,2])
+    ```
 
 - `find_by` with SQL fragments:
 
-  ```ruby
-  Post.find_by('published_at < ?', 2.weeks.ago)
-  ```
+    ```ruby
+    Post.find_by('published_at < ?', 2.weeks.ago)
+    ```
 
 ### Web Console
 
@@ -256,7 +256,7 @@ deprecation warnings because it is opt-in.
 `rails-deprecated_sanitizer` will be supported for Rails 4.2 only; it will not
 be maintained for Rails 5.0.
 
-See [this blog post](http://blog.plataformatec.com.br/2014/07/the-new-html-sanitizer-in-rails-4-2/)
+See [this blog post](https://blog.plataformatec.com.br/2014/07/the-new-html-sanitizer-in-rails-4-2/)
 for more details on the changes in the new sanitizer.
 
 ### `assert_select`
@@ -396,15 +396,17 @@ Please refer to the [Changelog][railties] for detailed changes.
 *   Introduced `Rails::Application.config_for` to load a configuration for the
     current environment.
 
-    ```ruby
-    # config/exception_notification.yml:
+    ```yaml
+    # config/exception_notification.yml
     production:
       url: http://127.0.0.1:8080
       namespace: my_app_production
     development:
       url: http://localhost:3001
       namespace: my_app_development
+    ```
 
+    ```ruby
     # config/environments/production.rb
     Rails.application.configure do
       config.middleware.use ExceptionNotifier, config_for(:exception_notification)
@@ -446,7 +448,7 @@ Please refer to the [Changelog][action-pack] for detailed changes.
     moved to the `responders` gem (version 2.0). Add `gem 'responders', '~> 2.0'`
     to your `Gemfile` to continue using these features.
     ([Pull Request](https://github.com/rails/rails/pull/16526),
-     [More Details](https://guides.rubyonrails.org/upgrading_ruby_on_rails.html#responders))
+     [More Details](https://guides.rubyonrails.org/v4.2/upgrading_ruby_on_rails.html#responders))
 
 *   Removed deprecated `AbstractController::Helpers::ClassMethods::MissingHelperError`
     in favor of `AbstractController::Helpers::MissingHelperError`.
@@ -545,7 +547,7 @@ Please refer to the [Changelog][action-pack] for detailed changes.
     served if the client supports it and a pre-generated gzip file (`.gz`) is on disk.
     By default the asset pipeline generates `.gz` files for all compressible assets.
     Serving gzip files minimizes data transfer and speeds up asset requests. Always
-    [use a CDN](https://guides.rubyonrails.org/asset_pipeline.html#cdns) if you are
+    [use a CDN](https://guides.rubyonrails.org/v4.2/asset_pipeline.html#cdns) if you are
     serving assets from your Rails server in production.
     ([Pull Request](https://github.com/rails/rails/pull/16466))
 

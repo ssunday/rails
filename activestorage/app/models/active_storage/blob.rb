@@ -15,31 +15,16 @@
 # update a blob's metadata on a subsequent pass, but you should not update the key or change the uploaded file.
 # If you need to create a derivative or otherwise change the blob, simply create a new blob and purge the old one.
 class ActiveStorage::Blob < ActiveStorage::Record
-  # We use constant paths in the following include calls to avoid a gotcha of
-  # classic mode: If the parent application defines a top-level Analyzable, for
-  # example, and ActiveStorage::Blob::Analyzable is not yet loaded, a bare
-  #
-  #   include Analyzable
-  #
-  # would resolve to the top-level one, const_missing would not be triggered,
-  # and therefore ActiveStorage::Blob::Analyzable would not be autoloaded.
-  #
-  # By using qualified names, we ensure const_missing is invoked if needed.
-  # Please, note that Ruby 2.5 or newer is required, so Object is not checked
-  # when looking up the ancestors of ActiveStorage::Blob.
-  #
-  # Zeitwerk mode does not have this gotcha. If we ever drop classic mode, this
-  # can be simplified, bare constant names would just work.
-  include ActiveStorage::Blob::Analyzable
-  include ActiveStorage::Blob::Identifiable
-  include ActiveStorage::Blob::Representable
+  include Analyzable
+  include Identifiable
+  include Representable
 
   self.table_name = "active_storage_blobs"
 
   MINIMUM_TOKEN_LENGTH = 28
 
   has_secure_token :key, length: MINIMUM_TOKEN_LENGTH
-  store :metadata, accessors: [ :analyzed, :identified ], coder: ActiveRecord::Coders::JSON
+  store :metadata, accessors: [ :analyzed, :identified, :composed ], coder: ActiveRecord::Coders::JSON
 
   class_attribute :services, default: {}
   class_attribute :service, instance_accessor: false
@@ -49,16 +34,19 @@ class ActiveStorage::Blob < ActiveStorage::Record
   scope :unattached, -> { where.missing(:attachments) }
 
   after_initialize do
-    self.service_name ||= self.class.service.name
+    self.service_name ||= self.class.service&.name
   end
 
-  after_update_commit :update_service_metadata, if: :content_type_previously_changed?
+  after_update :touch_attachment_records
+
+  after_update_commit :update_service_metadata, if: -> { content_type_previously_changed? || metadata_previously_changed? }
 
   before_destroy(prepend: true) do
     raise ActiveRecord::InvalidForeignKey if attachments.exists?
   end
 
   validates :service_name, presence: true
+  validates :checksum, presence: true, unless: :composed
 
   validate do
     if service_name_changed? && service_name.present?
@@ -74,25 +62,25 @@ class ActiveStorage::Blob < ActiveStorage::Record
     # that was created ahead of the upload itself on form submission.
     #
     # The signed ID is also used to create stable URLs for the blob through the BlobsController.
+    def find_signed(id, record: nil, purpose: :blob_id)
+      super(id, purpose: purpose)
+    end
+
+    # Works like +find_signed+, but will raise an +ActiveSupport::MessageVerifier::InvalidSignature+
+    # exception if the +signed_id+ has either expired, has a purpose mismatch, is for another record,
+    # or has been tampered with. It will also raise an +ActiveRecord::RecordNotFound+ exception if
+    # the valid signed id can't find a record.
     def find_signed!(id, record: nil, purpose: :blob_id)
       super(id, purpose: purpose)
     end
 
-    def build_after_upload(io:, filename:, content_type: nil, metadata: nil, service_name: nil, identify: true, record: nil) #:nodoc:
-      new(filename: filename, content_type: content_type, metadata: metadata, service_name: service_name).tap do |blob|
-        blob.upload(io, identify: identify)
-      end
-    end
-
-    deprecate :build_after_upload
-
-    def build_after_unfurling(key: nil, io:, filename:, content_type: nil, metadata: nil, service_name: nil, identify: true, record: nil) #:nodoc:
+    def build_after_unfurling(key: nil, io:, filename:, content_type: nil, metadata: nil, service_name: nil, identify: true, record: nil) # :nodoc:
       new(key: key, filename: filename, content_type: content_type, metadata: metadata, service_name: service_name).tap do |blob|
         blob.unfurl(io, identify: identify)
       end
     end
 
-    def create_after_unfurling!(key: nil, io:, filename:, content_type: nil, metadata: nil, service_name: nil, identify: true, record: nil) #:nodoc:
+    def create_after_unfurling!(key: nil, io:, filename:, content_type: nil, metadata: nil, service_name: nil, identify: true, record: nil) # :nodoc:
       build_after_unfurling(key: key, io: io, filename: filename, content_type: content_type, metadata: metadata, service_name: service_name, identify: identify).tap(&:save!)
     end
 
@@ -107,9 +95,6 @@ class ActiveStorage::Blob < ActiveStorage::Record
       end
     end
 
-    alias_method :create_after_upload!, :create_and_upload!
-    deprecate create_after_upload!: :create_and_upload!
-
     # Returns a saved blob _without_ uploading a file to the service. This blob will point to a key where there is
     # no file yet. It's intended to be used together with a client-side upload, which will first create the blob
     # in order to produce the signed URL for uploading. This signed URL points to the key generated by the blob.
@@ -122,14 +107,14 @@ class ActiveStorage::Blob < ActiveStorage::Record
     # To prevent problems with case-insensitive filesystems, especially in combination
     # with databases which treat indices as case-sensitive, all blob keys generated are going
     # to only contain the base-36 character alphabet and will therefore be lowercase. To maintain
-    # the same or higher amount of entropy as in the base-58 encoding used by `has_secure_token`
+    # the same or higher amount of entropy as in the base-58 encoding used by +has_secure_token+
     # the number of bytes used is increased to 28 from the standard 24
     def generate_unique_secure_token(length: MINIMUM_TOKEN_LENGTH)
       SecureRandom.base36(length)
     end
 
     # Customize signed ID purposes for backwards compatibility.
-    def combine_signed_id_purposes(purpose) #:nodoc:
+    def combine_signed_id_purposes(purpose) # :nodoc:
       purpose.to_s
     end
 
@@ -137,13 +122,33 @@ class ActiveStorage::Blob < ActiveStorage::Record
     #
     # We override the reader (.signed_id_verifier) instead of just calling the writer (.signed_id_verifier=)
     # to guard against the case where ActiveStorage.verifier isn't yet initialized at load time.
-    def signed_id_verifier #:nodoc:
+    def signed_id_verifier # :nodoc:
       @signed_id_verifier ||= ActiveStorage.verifier
+    end
+
+    def scope_for_strict_loading # :nodoc:
+      if strict_loading_by_default? && ActiveStorage.track_variants
+        includes(variant_records: { image_attachment: :blob }, preview_image_attachment: :blob)
+      else
+        all
+      end
+    end
+
+    # Concatenate multiple blobs into a single "composed" blob.
+    def compose(blobs, filename:, content_type: nil, metadata: nil)
+      raise ActiveRecord::RecordNotSaved, "All blobs must be persisted." if blobs.any?(&:new_record?)
+
+      content_type ||= blobs.pluck(:content_type).compact.first
+
+      new(filename: filename, content_type: content_type, metadata: metadata, byte_size: blobs.sum(&:byte_size)).tap do |combined_blob|
+        combined_blob.compose(blobs.pluck(:key))
+        combined_blob.save!
+      end
     end
   end
 
   # Returns a signed ID for this blob that's suitable for reference on the client-side without fear of tampering.
-  def signed_id(purpose: :blob_id)
+  def signed_id(purpose: :blob_id, expires_in: nil)
     super
   end
 
@@ -161,6 +166,14 @@ class ActiveStorage::Blob < ActiveStorage::Record
   # that's safe to use in URLs.
   def filename
     ActiveStorage::Filename.new(self[:filename])
+  end
+
+  def custom_metadata
+    self[:metadata][:custom] || {}
+  end
+
+  def custom_metadata=(metadata)
+    self[:metadata] = self[:metadata].merge(custom: metadata)
   end
 
   # Returns true if the content_type of this blob is in the image range, like image/png.
@@ -192,25 +205,22 @@ class ActiveStorage::Blob < ActiveStorage::Record
       content_type: content_type_for_serving, disposition: forced_disposition_for_serving || disposition, **options
   end
 
-  alias_method :service_url, :url
-  deprecate service_url: :url
-
   # Returns a URL that can be used to directly upload a file for this blob on the service. This URL is intended to be
   # short-lived for security and only generated on-demand by the client-side JavaScript responsible for doing the uploading.
   def service_url_for_direct_upload(expires_in: ActiveStorage.service_urls_expire_in)
-    service.url_for_direct_upload key, expires_in: expires_in, content_type: content_type, content_length: byte_size, checksum: checksum
+    service.url_for_direct_upload key, expires_in: expires_in, content_type: content_type, content_length: byte_size, checksum: checksum, custom_metadata: custom_metadata
   end
 
   # Returns a Hash of headers for +service_url_for_direct_upload+ requests.
   def service_headers_for_direct_upload
-    service.headers_for_direct_upload key, filename: filename, content_type: content_type, content_length: byte_size, checksum: checksum
+    service.headers_for_direct_upload key, filename: filename, content_type: content_type, content_length: byte_size, checksum: checksum, custom_metadata: custom_metadata
   end
 
-  def content_type_for_serving #:nodoc:
+  def content_type_for_serving # :nodoc:
     forcibly_serve_as_binary? ? ActiveStorage.binary_content_type : content_type
   end
 
-  def forced_disposition_for_serving #:nodoc:
+  def forced_disposition_for_serving # :nodoc:
     if forcibly_serve_as_binary? || !allowed_inline?
       :attachment
     end
@@ -234,21 +244,31 @@ class ActiveStorage::Blob < ActiveStorage::Record
     upload_without_unfurling io
   end
 
-  def unfurl(io, identify: true) #:nodoc:
+  def unfurl(io, identify: true) # :nodoc:
     self.checksum     = compute_checksum_in_chunks(io)
     self.content_type = extract_content_type(io) if content_type.nil? || identify
     self.byte_size    = io.size
     self.identified   = true
   end
 
-  def upload_without_unfurling(io) #:nodoc:
+  def upload_without_unfurling(io) # :nodoc:
     service.upload key, io, checksum: checksum, **service_metadata
+  end
+
+  def compose(keys) # :nodoc:
+    self.composed = true
+    service.compose(keys, key, **service_metadata)
   end
 
   # Downloads the file associated with this blob. If no block is given, the entire file is read into memory and returned.
   # That'll use a lot of RAM for very large files. If a block is given, then the download is streamed and yielded in chunks.
   def download(&block)
     service.download key, &block
+  end
+
+  # Downloads a part of the file associated with this blob.
+  def download_chunk(range)
+    service.download_chunk key, range
   end
 
   # Downloads the blob to a tempfile on disk. Yields the tempfile.
@@ -265,11 +285,17 @@ class ActiveStorage::Blob < ActiveStorage::Record
   #
   # Raises ActiveStorage::IntegrityError if the downloaded data does not match the blob's checksum.
   def open(tmpdir: nil, &block)
-    service.open key, checksum: checksum,
-      name: [ "ActiveStorage-#{id}-", filename.extension_with_delimiter ], tmpdir: tmpdir, &block
+    service.open(
+      key,
+      checksum: checksum,
+      verify: !composed,
+      name: [ "ActiveStorage-#{id}-", filename.extension_with_delimiter ],
+      tmpdir: tmpdir,
+      &block
+    )
   end
 
-  def mirror_later #:nodoc:
+  def mirror_later # :nodoc:
     ActiveStorage::MirrorJob.perform_later(key, checksum: checksum) if service.respond_to?(:mirror)
   end
 
@@ -286,7 +312,7 @@ class ActiveStorage::Blob < ActiveStorage::Record
   # be slow or prevented, so you should not use this method inside a transaction or in callbacks. Use #purge_later instead.
   def purge
     destroy
-    delete
+    delete if previously_persisted?
   rescue ActiveRecord::InvalidForeignKey
   end
 
@@ -301,9 +327,36 @@ class ActiveStorage::Blob < ActiveStorage::Record
     services.fetch(service_name)
   end
 
+  def content_type=(value)
+    unless ActiveStorage.silence_invalid_content_types_warning
+      if INVALID_VARIABLE_CONTENT_TYPES_DEPRECATED_IN_RAILS_7.include?(value)
+        ActiveStorage.deprecator.warn(<<-MSG.squish)
+          #{value} is not a valid content type, it should not be used when creating a blob, and support for it will be removed in Rails 7.1.
+          If you want to keep supporting this content type past Rails 7.1, add it to `config.active_storage.variable_content_types`.
+          Dismiss this warning by setting `config.active_storage.silence_invalid_content_types_warning = true`.
+        MSG
+      end
+
+      if INVALID_VARIABLE_CONTENT_TYPES_TO_SERVE_AS_BINARY_DEPRECATED_IN_RAILS_7.include?(value)
+        ActiveStorage.deprecator.warn(<<-MSG.squish)
+          #{value} is not a valid content type, it should not be used when creating a blob, and support for it will be removed in Rails 7.1.
+          If you want to keep supporting this content type past Rails 7.1, add it to `config.active_storage.content_types_to_serve_as_binary`.
+          Dismiss this warning by setting `config.active_storage.silence_invalid_content_types_warning = true`.
+        MSG
+      end
+    end
+
+    super
+  end
+
+  INVALID_VARIABLE_CONTENT_TYPES_DEPRECATED_IN_RAILS_7 = ["image/jpg", "image/pjpeg"]
+  INVALID_VARIABLE_CONTENT_TYPES_TO_SERVE_AS_BINARY_DEPRECATED_IN_RAILS_7 = ["text/javascript"]
+
   private
     def compute_checksum_in_chunks(io)
-      Digest::MD5.new.tap do |checksum|
+      raise ArgumentError, "io must be rewindable" unless io.respond_to?(:rewind)
+
+      OpenSSL::Digest::MD5.new.tap do |checksum|
         while chunk = io.read(5.megabytes)
           checksum << chunk
         end
@@ -330,11 +383,17 @@ class ActiveStorage::Blob < ActiveStorage::Record
 
     def service_metadata
       if forcibly_serve_as_binary?
-        { content_type: ActiveStorage.binary_content_type, disposition: :attachment, filename: filename }
+        { content_type: ActiveStorage.binary_content_type, disposition: :attachment, filename: filename, custom_metadata: custom_metadata }
       elsif !allowed_inline?
-        { content_type: content_type, disposition: :attachment, filename: filename }
+        { content_type: content_type, disposition: :attachment, filename: filename, custom_metadata: custom_metadata }
       else
-        { content_type: content_type }
+        { content_type: content_type, custom_metadata: custom_metadata }
+      end
+    end
+
+    def touch_attachment_records
+      attachments.includes(:record).each do |attachment|
+        attachment.touch
       end
     end
 

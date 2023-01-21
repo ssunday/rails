@@ -36,6 +36,14 @@ module ActiveRecord
 
     attr_reader :columns, :rows, :column_types
 
+    def self.empty(async: false) # :nodoc:
+      if async
+        EMPTY_ASYNC
+      else
+        EMPTY
+      end
+    end
+
     def initialize(columns, rows, column_types = {})
       @columns      = columns
       @rows         = rows
@@ -57,18 +65,13 @@ module ActiveRecord
     # row as parameter.
     #
     # Returns an +Enumerator+ if no block is given.
-    def each
+    def each(&block)
       if block_given?
-        hash_rows.each { |row| yield row }
+        hash_rows.each(&block)
       else
         hash_rows.to_enum { @rows.size }
       end
     end
-
-    alias :map! :map
-    alias :collect! :map
-    deprecate "map!": :map
-    deprecate "collect!": :map
 
     # Returns true if there are no records, otherwise false.
     def empty?
@@ -89,6 +92,14 @@ module ActiveRecord
     # Returns the last record from the rows collection.
     def last(n = nil)
       n ? hash_rows.last(n) : hash_rows.last
+    end
+
+    def result # :nodoc:
+      self
+    end
+
+    def cancel # :nodoc:
+      self
     end
 
     def cast_values(type_overrides = {}) # :nodoc:
@@ -122,6 +133,11 @@ module ActiveRecord
       @rows         = rows.dup
       @column_types = column_types.dup
       @hash_rows    = nil
+    end
+
+    def freeze # :nodoc:
+      hash_rows.freeze
+      super
     end
 
     private
@@ -171,5 +187,11 @@ module ActiveRecord
             }
           end
       end
+
+      EMPTY = new([].freeze, [].freeze, {}.freeze).freeze
+      private_constant :EMPTY
+
+      EMPTY_ASYNC = FutureResult::Complete.new(EMPTY).freeze
+      private_constant :EMPTY_ASYNC
   end
 end

@@ -3,7 +3,8 @@
 Active Support Core Extensions
 ==============================
 
-Active Support is the Ruby on Rails component responsible for providing Ruby language extensions, utilities, and other transversal stuff.
+Active Support is the Ruby on Rails component responsible for providing Ruby
+language extensions and utilities.
 
 It offers a richer bottom-line at the language level, targeted both at the development of Rails applications, and at the development of Ruby on Rails itself.
 
@@ -21,7 +22,7 @@ How to Load Core Extensions
 
 ### Stand-Alone Active Support
 
-In order to have a near-zero default footprint, Active Support does not load anything by default. It is broken in small pieces so that you can load just what you need, and also has some convenience entry points to load related extensions in one shot, even everything.
+In order to have the smallest default footprint possible, Active Support loads the minimum dependencies by default. It is broken in small pieces so that only the desired extensions can be loaded. It also has some convenience entry points to load related extensions in one shot, even everything.
 
 Thus, after a simple require like:
 
@@ -29,34 +30,38 @@ Thus, after a simple require like:
 require "active_support"
 ```
 
-objects do not even respond to [`blank?`][Object#blank?]. Let's see how to load its definition.
+only the extensions required by the Active Support framework are loaded.
 
 #### Cherry-picking a Definition
 
-The most lightweight way to get `blank?` is to cherry-pick the file that defines it.
+This example shows how to load [`Hash#with_indifferent_access`][Hash#with_indifferent_access].  This extension enables the conversion of a `Hash` into an [`ActiveSupport::HashWithIndifferentAccess`][ActiveSupport::HashWithIndifferentAccess] which permits access to the keys as either strings or symbols.
 
-For every single method defined as a core extension this guide has a note that says where such a method is defined. In the case of `blank?` the note reads:
+```ruby
+{a: 1}.with_indifferent_access["a"] # => 1
+```
 
-NOTE: Defined in `active_support/core_ext/object/blank.rb`.
+For every single method defined as a core extension this guide has a note that says where such a method is defined. In the case of `with_indifferent_access` the note reads:
+
+NOTE: Defined in `active_support/core_ext/hash/indifferent_access.rb`.
 
 That means that you can require it like this:
 
 ```ruby
 require "active_support"
-require "active_support/core_ext/object/blank"
+require "active_support/core_ext/hash/indifferent_access"
 ```
 
 Active Support has been carefully revised so that cherry-picking a file loads only strictly needed dependencies, if any.
 
 #### Loading Grouped Core Extensions
 
-The next level is to simply load all extensions to `Object`. As a rule of thumb, extensions to `SomeClass` are available in one shot by loading `active_support/core_ext/some_class`.
+The next level is to simply load all extensions to `Hash`. As a rule of thumb, extensions to `SomeClass` are available in one shot by loading `active_support/core_ext/some_class`.
 
-Thus, to load all extensions to `Object` (including `blank?`):
+Thus, to load all extensions to `Hash` (including `with_indifferent_access`):
 
 ```ruby
 require "active_support"
-require "active_support/core_ext/object"
+require "active_support/core_ext/hash"
 ```
 
 #### Loading All Core Extensions
@@ -80,7 +85,9 @@ That does not even put the entire Active Support in memory upfront indeed, some 
 
 ### Active Support Within a Ruby on Rails Application
 
-A Ruby on Rails application loads all Active Support unless `config.active_support.bare` is true. In that case, the application will only load what the framework itself cherry-picks for its own needs, and can still cherry-pick itself at any granularity level, as explained in the previous section.
+A Ruby on Rails application loads all Active Support unless [`config.active_support.bare`][] is true. In that case, the application will only load what the framework itself cherry-picks for its own needs, and can still cherry-pick itself at any granularity level, as explained in the previous section.
+
+[`config.active_support.bare`]: configuring.html#config-active-support-bare
 
 Extensions to All Objects
 -------------------------
@@ -117,7 +124,7 @@ The method [`present?`][Object#present?] is equivalent to `!blank?`. This exampl
 ```ruby
 def set_conditional_cache_control!
   return if self["Cache-Control"].present?
-  ...
+  # ...
 end
 ```
 
@@ -215,7 +222,7 @@ NOTE: Defined in `active_support/core_ext/object/deep_dup.rb`.
 
 ### `try`
 
-When you want to call a method on an object only if it is not `nil`, the simplest way to achieve it is with conditional statements, adding unnecessary clutter. The alternative is to use [`try`][Object#try]. `try` is like `Object#send` except that it returns `nil` if sent to `nil`.
+When you want to call a method on an object only if it is not `nil`, the simplest way to achieve it is with conditional statements, adding unnecessary clutter. The alternative is to use [`try`][Object#try]. `try` is like `Object#public_send` except that it returns `nil` if sent to `nil`.
 
 Here is an example:
 
@@ -444,9 +451,9 @@ NOTE: Defined in `active_support/core_ext/object/with_options.rb`.
 
 [Object#with_options]: https://api.rubyonrails.org/classes/Object.html#method-i-with_options
 
-### JSON support
+### JSON Support
 
-Active Support provides a better implementation of `to_json` than the `json` gem ordinarily provides for Ruby objects. This is because some classes, like `Hash`, `OrderedHash` and `Process::Status` need special handling in order to provide a proper JSON representation.
+Active Support provides a better implementation of `to_json` than the `json` gem ordinarily provides for Ruby objects. This is because some classes, like `Hash` and `Process::Status` need special handling in order to provide a proper JSON representation.
 
 NOTE: Defined in `active_support/core_ext/object/json.rb`.
 
@@ -599,22 +606,11 @@ NOTE: Defined in `active_support/core_ext/module/attr_internal.rb`.
 
 The macros [`mattr_reader`][Module#mattr_reader], [`mattr_writer`][Module#mattr_writer], and [`mattr_accessor`][Module#mattr_accessor] are the same as the `cattr_*` macros defined for class. In fact, the `cattr_*` macros are just aliases for the `mattr_*` macros. Check [Class Attributes](#class-attributes).
 
-For example, the dependencies mechanism uses them:
+For example, the API for the logger of Active Storage is generated with `mattr_accessor`:
 
 ```ruby
-module ActiveSupport
-  module Dependencies
-    mattr_accessor :warnings_on_first_load
-    mattr_accessor :history
-    mattr_accessor :loaded
-    mattr_accessor :mechanism
-    mattr_accessor :load_paths
-    mattr_accessor :load_once_paths
-    mattr_accessor :autoloaded_constants
-    mattr_accessor :explicitly_unloadable_constants
-    mattr_accessor :constant_watch_stack
-    mattr_accessor :constant_watch_stack_mutex
-  end
+module ActiveStorage
+  mattr_accessor :logger
 end
 ```
 
@@ -1015,7 +1011,7 @@ NOTE: Defined in `active_support/core_ext/module/attribute_accessors.rb`.
 [Module#cattr_reader]: https://api.rubyonrails.org/classes/Module.html#method-i-cattr_reader
 [Module#cattr_writer]: https://api.rubyonrails.org/classes/Module.html#method-i-cattr_writer
 
-### Subclasses & Descendants
+### Subclasses and Descendants
 
 #### `subclasses`
 
@@ -1468,8 +1464,8 @@ Active Record uses this method to compute the default table name that correspond
 
 ```ruby
 # active_record/model_schema.rb
-def undecorated_table_name(class_name = base_class.name)
-  table_name = class_name.to_s.demodulize.underscore
+def undecorated_table_name(model_name)
+  table_name = model_name.to_s.demodulize.underscore
   pluralize_table_names ? table_name.pluralize : table_name
 end
 ```
@@ -1577,17 +1573,16 @@ and understands strings that start with lowercase:
 
 `underscore` accepts no argument though.
 
-Rails class and module autoloading uses `underscore` to infer the relative path without extension of a file that would define a given missing constant:
+Rails uses `underscore` to get a lowercased name for controller classes:
 
 ```ruby
-# active_support/dependencies.rb
-def load_missing_constant(from_mod, const_name)
-  ...
-  qualified_name = qualified_name_for from_mod, const_name
-  path_suffix = qualified_name.underscore
-  ...
+# actionpack/lib/abstract_controller/base.rb
+def controller_path
+  @controller_path ||= name.delete_suffix("Controller").underscore
 end
 ```
+
+For example, that value is the one you get in `params[:controller]`.
 
 INFO: As a rule of thumb you can think of `underscore` as the inverse of `camelize`, though there are cases where that does not hold. For example, `"SSLError".underscore.camelize` gives back `"SslError"`.
 
@@ -1644,7 +1639,6 @@ Given a string with a qualified constant name, [`demodulize`][String#demodulize]
 "Admin::Hotel::ReservationUtils".demodulize # => "ReservationUtils"
 "::Inflections".demodulize                  # => "Inflections"
 "".demodulize                               # => ""
-
 ```
 
 Active Record for example uses this method to compute the name of a counter cache column:
@@ -1697,8 +1691,8 @@ To preserve the case of the string, set the `preserve_case` argument to true. By
 To use a custom separator, override the `separator` argument.
 
 ```ruby
-"John Smith".parameterize(separator: "_") # => "john\_smith"
-"Kurt Gödel".parameterize(separator: "_") # => "kurt\_godel"
+"John Smith".parameterize(separator: "_") # => "john_smith"
+"Kurt Gödel".parameterize(separator: "_") # => "kurt_godel"
 ```
 
 NOTE: Defined in `active_support/core_ext/string/inflections.rb`.
@@ -1827,10 +1821,10 @@ def full_messages
 end
 
 def full_message
-  ...
+  # ...
   attr_name = attribute.to_s.tr('.', '_').humanize
   attr_name = @base.class.human_attribute_name(attribute, default: attr_name)
-  ...
+  # ...
 end
 ```
 
@@ -1864,6 +1858,32 @@ foreign_key = options[:foreign_key] || reflection.active_record.name.foreign_key
 NOTE: Defined in `active_support/core_ext/string/inflections.rb`.
 
 [String#foreign_key]: https://api.rubyonrails.org/classes/String.html#method-i-foreign_key
+
+#### `upcase_first`
+
+The method [`upcase_first`][String#upcase_first] capitalizes the first letter of the receiver:
+
+```ruby
+"employee salary".upcase_first # => "Employee salary"
+"".upcase_first                # => ""
+```
+
+NOTE: Defined in `active_support/core_ext/string/inflections.rb`.
+
+[String#upcase_first]: https://api.rubyonrails.org/classes/String.html#method-i-upcase_first
+
+#### `downcase_first`
+
+The method [`downcase_first`][String#downcase_first] converts the first letter of the receiver to lowercase:
+
+```ruby
+"If I had read Alice in Wonderland".downcase_first # => "if I had read Alice in Wonderland"
+"".downcase_first                                  # => ""
+```
+
+NOTE: Defined in `active_support/core_ext/string/inflections.rb`.
+
+[String#downcase_first]: https://api.rubyonrails.org/classes/String.html#method-i-downcase_first
 
 ### Conversions
 
@@ -1996,84 +2016,84 @@ Enables the formatting of numbers in a variety of ways.
 Produce a string representation of a number as a telephone number:
 
 ```ruby
-5551234.to_s(:phone)
+5551234.to_fs(:phone)
 # => 555-1234
-1235551234.to_s(:phone)
+1235551234.to_fs(:phone)
 # => 123-555-1234
-1235551234.to_s(:phone, area_code: true)
+1235551234.to_fs(:phone, area_code: true)
 # => (123) 555-1234
-1235551234.to_s(:phone, delimiter: " ")
+1235551234.to_fs(:phone, delimiter: " ")
 # => 123 555 1234
-1235551234.to_s(:phone, area_code: true, extension: 555)
+1235551234.to_fs(:phone, area_code: true, extension: 555)
 # => (123) 555-1234 x 555
-1235551234.to_s(:phone, country_code: 1)
+1235551234.to_fs(:phone, country_code: 1)
 # => +1-123-555-1234
 ```
 
 Produce a string representation of a number as currency:
 
 ```ruby
-1234567890.50.to_s(:currency)                 # => $1,234,567,890.50
-1234567890.506.to_s(:currency)                # => $1,234,567,890.51
-1234567890.506.to_s(:currency, precision: 3)  # => $1,234,567,890.506
+1234567890.50.to_fs(:currency)                 # => $1,234,567,890.50
+1234567890.506.to_fs(:currency)                # => $1,234,567,890.51
+1234567890.506.to_fs(:currency, precision: 3)  # => $1,234,567,890.506
 ```
 
 Produce a string representation of a number as a percentage:
 
 ```ruby
-100.to_s(:percentage)
+100.to_fs(:percentage)
 # => 100.000%
-100.to_s(:percentage, precision: 0)
+100.to_fs(:percentage, precision: 0)
 # => 100%
-1000.to_s(:percentage, delimiter: '.', separator: ',')
+1000.to_fs(:percentage, delimiter: '.', separator: ',')
 # => 1.000,000%
-302.24398923423.to_s(:percentage, precision: 5)
+302.24398923423.to_fs(:percentage, precision: 5)
 # => 302.24399%
 ```
 
 Produce a string representation of a number in delimited form:
 
 ```ruby
-12345678.to_s(:delimited)                     # => 12,345,678
-12345678.05.to_s(:delimited)                  # => 12,345,678.05
-12345678.to_s(:delimited, delimiter: ".")     # => 12.345.678
-12345678.to_s(:delimited, delimiter: ",")     # => 12,345,678
-12345678.05.to_s(:delimited, separator: " ")  # => 12,345,678 05
+12345678.to_fs(:delimited)                     # => 12,345,678
+12345678.05.to_fs(:delimited)                  # => 12,345,678.05
+12345678.to_fs(:delimited, delimiter: ".")     # => 12.345.678
+12345678.to_fs(:delimited, delimiter: ",")     # => 12,345,678
+12345678.05.to_fs(:delimited, separator: " ")  # => 12,345,678 05
 ```
 
 Produce a string representation of a number rounded to a precision:
 
 ```ruby
-111.2345.to_s(:rounded)                     # => 111.235
-111.2345.to_s(:rounded, precision: 2)       # => 111.23
-13.to_s(:rounded, precision: 5)             # => 13.00000
-389.32314.to_s(:rounded, precision: 0)      # => 389
-111.2345.to_s(:rounded, significant: true)  # => 111
+111.2345.to_fs(:rounded)                     # => 111.235
+111.2345.to_fs(:rounded, precision: 2)       # => 111.23
+13.to_fs(:rounded, precision: 5)             # => 13.00000
+389.32314.to_fs(:rounded, precision: 0)      # => 389
+111.2345.to_fs(:rounded, significant: true)  # => 111
 ```
 
 Produce a string representation of a number as a human-readable number of bytes:
 
 ```ruby
-123.to_s(:human_size)                  # => 123 Bytes
-1234.to_s(:human_size)                 # => 1.21 KB
-12345.to_s(:human_size)                # => 12.1 KB
-1234567.to_s(:human_size)              # => 1.18 MB
-1234567890.to_s(:human_size)           # => 1.15 GB
-1234567890123.to_s(:human_size)        # => 1.12 TB
-1234567890123456.to_s(:human_size)     # => 1.1 PB
-1234567890123456789.to_s(:human_size)  # => 1.07 EB
+123.to_fs(:human_size)                  # => 123 Bytes
+1234.to_fs(:human_size)                 # => 1.21 KB
+12345.to_fs(:human_size)                # => 12.1 KB
+1234567.to_fs(:human_size)              # => 1.18 MB
+1234567890.to_fs(:human_size)           # => 1.15 GB
+1234567890123.to_fs(:human_size)        # => 1.12 TB
+1234567890123456.to_fs(:human_size)     # => 1.1 PB
+1234567890123456789.to_fs(:human_size)  # => 1.07 EB
 ```
 
 Produce a string representation of a number in human-readable words:
 
 ```ruby
-123.to_s(:human)               # => "123"
-1234.to_s(:human)              # => "1.23 Thousand"
-12345.to_s(:human)             # => "12.3 Thousand"
-1234567.to_s(:human)           # => "1.23 Million"
-1234567890.to_s(:human)        # => "1.23 Billion"
-1234567890123.to_s(:human)     # => "1.23 Trillion"
-1234567890123456.to_s(:human)  # => "1.23 Quadrillion"
+123.to_fs(:human)               # => "123"
+1234.to_fs(:human)              # => "1.23 Thousand"
+12345.to_fs(:human)             # => "12.3 Thousand"
+1234567.to_fs(:human)           # => "1.23 Million"
+1234567890.to_fs(:human)        # => "1.23 Billion"
+1234567890123.to_fs(:human)     # => "1.23 Trillion"
+1234567890123456.to_fs(:human)  # => "1.23 Quadrillion"
 ```
 
 NOTE: Defined in `active_support/core_ext/numeric/conversions.rb`.
@@ -2159,18 +2179,13 @@ NOTE: Defined in `active_support/core_ext/integer/time.rb`.
 
 Extensions to `BigDecimal`
 --------------------------
+
 ### `to_s`
 
-The method `to_s` provides a default specifier of "F". This means that a simple call to `to_s` will result in floating point representation instead of engineering notation:
+The method `to_s` provides a default specifier of "F". This means that a simple call to `to_s` will result in floating-point representation instead of engineering notation:
 
 ```ruby
 BigDecimal(5.00, 6).to_s       # => "5.0"
-```
-
-and that symbol specifiers are also supported:
-
-```ruby
-BigDecimal(5.00, 6).to_s(:db)  # => "5.0"
 ```
 
 Engineering notation is still supported:
@@ -2438,7 +2453,7 @@ Let's see for example the definition of the `caches_action` controller macro:
 def caches_action(*actions)
   return unless cache_configured?
   options = actions.extract_options!
-  ...
+  # ...
 end
 ```
 
@@ -2479,25 +2494,25 @@ NOTE: Defined in `active_support/core_ext/array/conversions.rb`.
 
 [Array#to_sentence]: https://api.rubyonrails.org/classes/Array.html#method-i-to_sentence
 
-#### `to_formatted_s`
+#### `to_fs`
 
-The method [`to_formatted_s`][Array#to_formatted_s] acts like `to_s` by default.
+The method [`to_fs`][Array#to_fs] acts like `to_s` by default.
 
 If the array contains items that respond to `id`, however, the symbol
 `:db` may be passed as argument. That's typically used with
 collections of Active Record objects. Returned strings are:
 
 ```ruby
-[].to_formatted_s(:db)            # => "null"
-[user].to_formatted_s(:db)        # => "8456"
-invoice.lines.to_formatted_s(:db) # => "23,567,556,12"
+[].to_fs(:db)            # => "null"
+[user].to_fs(:db)        # => "8456"
+invoice.lines.to_fs(:db) # => "23,567,556,12"
 ```
 
 Integers in the example above are supposed to come from the respective calls to `id`.
 
 NOTE: Defined in `active_support/core_ext/array/conversions.rb`.
 
-[Array#to_formatted_s]: https://api.rubyonrails.org/classes/Array.html#method-i-to_formatted_s
+[Array#to_fs]: https://api.rubyonrails.org/classes/Array.html#method-i-to_fs
 
 #### `to_xml`
 
@@ -2880,7 +2895,7 @@ NOTE: Defined in `active_support/core_ext/hash/deep_merge.rb`.
 [Hash#deep_merge!]: https://api.rubyonrails.org/classes/Hash.html#method-i-deep_merge-21
 [Hash#deep_merge]: https://api.rubyonrails.org/classes/Hash.html#method-i-deep_merge
 
-### Deep duplicating
+### Deep Duplicating
 
 The method [`Hash#deep_dup`][Hash#deep_dup] duplicates itself and all keys and values
 inside recursively with Active Support method `Object#deep_dup`. It works like `Enumerator#each_with_object` with sending `deep_dup` method to each pair inside.
@@ -2947,7 +2962,7 @@ This method may be useful for example to easily accept both symbols and strings 
 def to_check_box_tag(options = {}, checked_value = "1", unchecked_value = "0")
   options = options.stringify_keys
   options["type"] = "checkbox"
-  ...
+  # ...
 end
 ```
 
@@ -2984,7 +2999,6 @@ In case of key collision, the value will be the one most recently inserted into 
 
 ```ruby
 {"a" => 1, a: 2}.symbolize_keys
-# The result will be
 # => {:a=>2}
 ```
 
@@ -2994,8 +3008,8 @@ This method may be useful for example to easily accept both symbols and strings 
 def rich_text_area_tag(name, value = nil, options = {})
   options = options.symbolize_keys
 
-  options[:input] ||= "trix_input_#{ActionText::TagHelper.id += 1}
-  ...
+  options[:input] ||= "trix_input_#{ActionText::TagHelper.id += 1}"
+  # ...
 end
 ```
 
@@ -3019,7 +3033,7 @@ NOTE: Defined in `active_support/core_ext/hash/keys.rb`.
 
 #### `to_options` and `to_options!`
 
-The methods [`to_options`][Hash#to_options] and [`to_options!`][Hash#to_options!] are respectively aliases of `symbolize_keys` and `symbolize_keys!`.
+The methods [`to_options`][Hash#to_options] and [`to_options!`][Hash#to_options!] are aliases of `symbolize_keys` and `symbolize_keys!`, respectively.
 
 NOTE: Defined in `active_support/core_ext/hash/keys.rb`.
 
@@ -3129,11 +3143,11 @@ Rails uses this method in a single place, also in the routing code. Multiline re
 
 ```ruby
 def verify_regexp_requirements(requirements)
-  ...
+  # ...
   if requirement.multiline?
     raise ArgumentError, "Regexp multiline option is not allowed in routing requirements: #{requirement.inspect}"
   end
-  ...
+  # ...
 end
 ```
 
@@ -3144,15 +3158,15 @@ NOTE: Defined in `active_support/core_ext/regexp.rb`.
 Extensions to `Range`
 ---------------------
 
-### `to_s`
+### `to_fs`
 
-Active Support extends the method `Range#to_s` so that it understands an optional format argument. As of this writing the only supported non-default format is `:db`:
+Active Support defines `Range#to_fs` as an alternative to `to_s` that understands an optional format argument. As of this writing the only supported non-default format is `:db`:
 
 ```ruby
-(Date.today..Date.tomorrow).to_s
+(Date.today..Date.tomorrow).to_fs
 # => "2009-10-25..2009-10-26"
 
-(Date.today..Date.tomorrow).to_s(:db)
+(Date.today..Date.tomorrow).to_fs(:db)
 # => "BETWEEN '2009-10-25' AND '2009-10-26'"
 ```
 
@@ -3160,9 +3174,9 @@ As the example depicts, the `:db` format generates a `BETWEEN` SQL clause. That 
 
 NOTE: Defined in `active_support/core_ext/range/conversions.rb`.
 
-### `===`, `include?`, and `cover?`
+### `===` and `include?`
 
-The methods `Range#===`, `Range#include?`, and `Range#cover?` say whether some value falls between the ends of a given instance:
+The methods `Range#===` and `Range#include?` say whether some value falls between the ends of a given instance:
 
 ```ruby
 (2..3).include?(Math::E) # => true
@@ -3180,11 +3194,6 @@ Active Support extends these methods so that the argument may be another range i
 (1..10).include?(0..7)  # => false
 (1..10).include?(3..11) # => false
 (1...9).include?(3..9)  # => false
-
-(1..10).cover?(3..7)  # => true
-(1..10).cover?(0..7)  # => false
-(1..10).cover?(3..11) # => false
-(1...9).cover?(3..9)  # => false
 ```
 
 NOTE: Defined in `active_support/core_ext/range/compare_range.rb`.
@@ -3226,14 +3235,14 @@ NOTE: Defined in `active_support/core_ext/date/calculations.rb`.
 [DateAndTime::Calculations#on_weekend?]: https://api.rubyonrails.org/classes/DateAndTime/Calculations.html#method-i-on_weekend-3F
 [DateAndTime::Calculations#past?]: https://api.rubyonrails.org/classes/DateAndTime/Calculations.html#method-i-past-3F
 
-#### Named dates
+#### Named Dates
 
 ##### `beginning_of_week`, `end_of_week`
 
 The methods [`beginning_of_week`][DateAndTime::Calculations#beginning_of_week] and [`end_of_week`][DateAndTime::Calculations#end_of_week] return the dates for the
 beginning and end of the week, respectively. Weeks are assumed to start on
 Monday, but that can be changed passing an argument, setting thread local
-`Date.beginning_of_week` or `config.beginning_of_week`.
+`Date.beginning_of_week` or [`config.beginning_of_week`][].
 
 ```ruby
 d = Date.new(2010, 5, 8)     # => Sat, 08 May 2010
@@ -3247,6 +3256,7 @@ d.end_of_week(:sunday)       # => Sat, 08 May 2010
 
 NOTE: Defined in `active_support/core_ext/date_and_time/calculations.rb`.
 
+[`config.beginning_of_week`]: configuring.html#config-beginning-of-week
 [DateAndTime::Calculations#at_beginning_of_week]: https://api.rubyonrails.org/classes/DateAndTime/Calculations.html#method-i-at_beginning_of_week
 [DateAndTime::Calculations#at_end_of_week]: https://api.rubyonrails.org/classes/DateAndTime/Calculations.html#method-i-at_end_of_week
 [DateAndTime::Calculations#beginning_of_week]: https://api.rubyonrails.org/classes/DateAndTime/Calculations.html#method-i-beginning_of_week
@@ -3276,7 +3286,7 @@ NOTE: Defined in `active_support/core_ext/date_and_time/calculations.rb`.
 
 ##### `prev_week`, `next_week`
 
-The method [`next_week`][DateAndTime::Calculations#next_week] receives a symbol with a day name in English (default is the thread local [`Date.beginning_of_week`][Date.beginning_of_week], or `config.beginning_of_week`, or `:monday`) and it returns the date corresponding to that day.
+The method [`next_week`][DateAndTime::Calculations#next_week] receives a symbol with a day name in English (default is the thread local [`Date.beginning_of_week`][Date.beginning_of_week], or [`config.beginning_of_week`][], or `:monday`) and it returns the date corresponding to that day.
 
 ```ruby
 d = Date.new(2010, 5, 9) # => Sun, 09 May 2010
@@ -3322,7 +3332,14 @@ NOTE: Defined in `active_support/core_ext/date_and_time/calculations.rb`.
 [DateAndTime::Calculations#beginning_of_month]: https://api.rubyonrails.org/classes/DateAndTime/Calculations.html#method-i-beginning_of_month
 [DateAndTime::Calculations#end_of_month]: https://api.rubyonrails.org/classes/DateAndTime/Calculations.html#method-i-end_of_month
 
-##### `beginning_of_quarter`, `end_of_quarter`
+##### `quarter`, `beginning_of_quarter`, `end_of_quarter`
+
+The method [`quarter`][DateAndTime::Calculations#quarter] returns the quarter of the receiver's calendar year:
+
+```ruby
+d = Date.new(2010, 5, 9) # => Sun, 09 May 2010
+d.quarter                # => 2
+```
 
 The methods [`beginning_of_quarter`][DateAndTime::Calculations#beginning_of_quarter] and [`end_of_quarter`][DateAndTime::Calculations#end_of_quarter] return the dates for the beginning and end of the quarter of the receiver's calendar year:
 
@@ -3336,6 +3353,7 @@ d.end_of_quarter         # => Wed, 30 Jun 2010
 
 NOTE: Defined in `active_support/core_ext/date_and_time/calculations.rb`.
 
+[DateAndTime::Calculations#quarter]: https://api.rubyonrails.org/classes/DateAndTime/Calculations.html#method-i-quarter
 [DateAndTime::Calculations#at_beginning_of_quarter]: https://api.rubyonrails.org/classes/DateAndTime/Calculations.html#method-i-at_beginning_of_quarter
 [DateAndTime::Calculations#at_end_of_quarter]: https://api.rubyonrails.org/classes/DateAndTime/Calculations.html#method-i-at_end_of_quarter
 [DateAndTime::Calculations#beginning_of_quarter]: https://api.rubyonrails.org/classes/DateAndTime/Calculations.html#method-i-beginning_of_quarter
@@ -3441,22 +3459,6 @@ date.advance(months: 2, days: -2) # => Wed, 04 Aug 2010
 ```
 
 Note in the previous example that increments may be negative.
-
-To perform the computation the method first increments years, then months, then weeks, and finally days. This order is important towards the end of months. Say for example we are at the end of February of 2010, and we want to move one month and one day forward.
-
-The method `advance` advances first one month, and then one day, the result is:
-
-```ruby
-Date.new(2010, 2, 28).advance(months: 1, days: 1)
-# => Sun, 29 Mar 2010
-```
-
-While if it did it the other way around the result would be different:
-
-```ruby
-Date.new(2010, 2, 28).advance(days: 1).advance(months: 1)
-# => Thu, 01 Apr 2010
-```
 
 NOTE: Defined in `active_support/core_ext/date/calculations.rb`.
 
@@ -3572,7 +3574,7 @@ date.end_of_minute # => Mon Jun 07 19:55:59 +0200 2010
 
 `beginning_of_minute` is aliased to [`at_beginning_of_minute`][DateTime#at_beginning_of_minute].
 
-INFO: `beginning_of_hour`, `end_of_hour`, `beginning_of_minute` and `end_of_minute` are implemented for `Time` and `DateTime` but **not** `Date` as it does not make sense to request the beginning or end of an hour or minute on a `Date` instance.
+INFO: `beginning_of_hour`, `end_of_hour`, `beginning_of_minute`, and `end_of_minute` are implemented for `Time` and `DateTime` but **not** `Date` as it does not make sense to request the beginning or end of an hour or minute on a `Date` instance.
 
 NOTE: Defined in `active_support/core_ext/date_time/calculations.rb`.
 
@@ -3600,10 +3602,6 @@ NOTE: Defined in `active_support/core_ext/date/calculations.rb`.
 
 [Date#ago]: https://api.rubyonrails.org/classes/Date.html#method-i-ago
 [Date#since]: https://api.rubyonrails.org/classes/Date.html#method-i-since
-
-#### Other Time Computations
-
-### Conversions
 
 Extensions to `DateTime`
 ------------------------
@@ -3807,7 +3805,7 @@ t.advance(seconds: 1)
 # => Sun Mar 28 03:00:00 +0200 2010
 ```
 
-* If [`since`][Time#since] or [`ago`][Time#ago] jump to a time that can't be expressed with `Time` a `DateTime` object is returned instead.
+* If [`since`][Time#since] or [`ago`][Time#ago] jumps to a time that can't be expressed with `Time` a `DateTime` object is returned instead.
 
 [Time#ago]: https://api.rubyonrails.org/classes/Time.html#method-i-ago
 [Time#change]: https://api.rubyonrails.org/classes/Time.html#method-i-change
@@ -3827,7 +3825,7 @@ NOTE: Defined in `active_support/core_ext/time/calculations.rb`.
 [DateAndTime::Calculations#tomorrow?]: https://api.rubyonrails.org/classes/DateAndTime/Calculations.html#method-i-tomorrow-3F
 [DateAndTime::Calculations#yesterday?]: https://api.rubyonrails.org/classes/DateAndTime/Calculations.html#method-i-yesterday-3F
 
-#### `all_day`, `all_week`, `all_month`, `all_quarter` and `all_year`
+#### `all_day`, `all_week`, `all_month`, `all_quarter`, and `all_year`
 
 The method [`all_day`][DateAndTime::Calculations#all_day] returns a range representing the whole day of the current time.
 
@@ -4017,25 +4015,6 @@ NOTE: Defined in `active_support/core_ext/file/atomic.rb`.
 
 [File.atomic_write]: https://api.rubyonrails.org/classes/File.html#method-c-atomic_write
 
-Extensions to `Marshal`
------------------------
-
-### `load`
-
-Active Support adds constant autoloading support to `load`.
-
-For example, the file cache store deserializes this way:
-
-```ruby
-File.open(file_name) { |f| Marshal.load(f) }
-```
-
-If the cached data refers to a constant that is unknown at that point, the autoloading mechanism is triggered and if it succeeds the deserialization is retried transparently.
-
-WARNING. If the argument is an `IO` it needs to respond to `rewind` to be able to retry. Regular files respond to `rewind`.
-
-NOTE: Defined in `active_support/core_ext/marshal.rb`.
-
 Extensions to `NameError`
 -------------------------
 
@@ -4087,3 +4066,18 @@ end
 NOTE: Defined in `active_support/core_ext/load_error.rb`.
 
 [LoadError#is_missing?]: https://api.rubyonrails.org/classes/LoadError.html#method-i-is_missing-3F
+
+Extensions to Pathname
+-------------------------
+
+### `existence`
+
+The [`existence`][Pathname#existence] method returns the receiver if the named file exists otherwise returns `nil`. It is useful for idioms like this:
+
+```ruby
+content = Pathname.new("file").existence&.read
+```
+
+NOTE: Defined in `active_support/core_ext/pathname/existence.rb`.
+
+[Pathname#existence]: https://api.rubyonrails.org/classes/Pathname.html#method-i-existence

@@ -11,7 +11,7 @@ Highlights in Rails 4.1:
 * Action Mailer previews
 
 These release notes cover only the major changes. To learn about various bug
-fixes and changes, please refer to the change logs or check out the [list of
+fixes and changes, please refer to the changelogs or check out the [list of
 commits](https://github.com/rails/rails/commits/4-1-stable) in the main Rails
 repository on GitHub.
 
@@ -182,7 +182,7 @@ Conversation.statuses # => { "active" => 0, "archived" => 1 }
 ```
 
 See its
-[documentation](http://api.rubyonrails.org/v4.1.0/classes/ActiveRecord/Enum.html)
+[documentation](https://api.rubyonrails.org/v4.1.0/classes/ActiveRecord/Enum.html)
 for a detailed write up.
 
 ### Message Verifiers
@@ -215,12 +215,12 @@ class Todo < ActiveRecord::Base
     end
 
     def latest_event
-      ...
+      # ...
     end
 
     private
       def some_internal_method
-        ...
+        # ...
       end
   end
 end
@@ -338,7 +338,7 @@ for detailed changes.
   array. ([Pull Request](https://github.com/rails/rails/pull/9599))
 
 * Added `session#fetch` method fetch behaves similarly to
-  [Hash#fetch](http://www.ruby-doc.org/core-1.9.3/Hash.html#method-i-fetch),
+  [Hash#fetch](https://www.ruby-doc.org/core-1.9.3/Hash.html#method-i-fetch),
   with the exception that the returned value is always saved into the
   session. ([Pull Request](https://github.com/rails/rails/pull/12692))
 
@@ -496,7 +496,7 @@ for detailed changes.
   map to integers in the database, but can be queried by
   name. ([Commit](https://github.com/rails/rails/commit/db41eb8a6ea88b854bf5cd11070ea4245e1639c5))
 
-* Type cast json values on write, so that the value is consistent with reading
+* Type cast JSON values on write, so that the value is consistent with reading
   from the database. ([Pull Request](https://github.com/rails/rails/pull/12643))
 
 * Type cast hstore values on write, so that the value is consistent

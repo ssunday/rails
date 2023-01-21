@@ -173,9 +173,9 @@ class HasOneThroughAssociationsTest < ActiveRecord::TestCase
 
   def test_has_one_through_with_conditions_eager_loading
     # conditions on the through table
-    assert_equal clubs(:moustache_club), Member.all.merge!(includes: :favourite_club).find(@member.id).favourite_club
-    memberships(:membership_of_favourite_club).update_columns(favourite: false)
-    assert_nil Member.all.merge!(includes: :favourite_club).find(@member.id).reload.favourite_club
+    assert_equal clubs(:moustache_club), Member.all.merge!(includes: :favorite_club).find(@member.id).favorite_club
+    memberships(:membership_of_favorite_club).update_columns(favorite: false)
+    assert_nil Member.all.merge!(includes: :favorite_club).find(@member.id).reload.favorite_club
 
     # conditions on the source table
     assert_equal clubs(:moustache_club), Member.all.merge!(includes: :hairy_club).find(@member.id).hairy_club
@@ -210,13 +210,13 @@ class HasOneThroughAssociationsTest < ActiveRecord::TestCase
   end
 
   def test_has_one_through_nonpreload_eager_loading_through_polymorphic_with_more_than_one_through_record
-    Sponsor.new(sponsor_club: clubs(:crazy_club), sponsorable: members(:groucho)).save!
+    Sponsor.new(sponsor_club: clubs(:outrageous_club), sponsorable: members(:groucho)).save!
     members = assert_queries(1) do
       Member.all.merge!(includes: :sponsor_club, where: ["members.name = ?", "Groucho Marx"], order: "clubs.name DESC").to_a # force fallback
     end
     assert_equal 1, members.size
     assert_not_nil assert_no_queries { members[0].sponsor_club }
-    assert_equal clubs(:crazy_club), members[0].sponsor_club
+    assert_equal clubs(:outrageous_club), members[0].sponsor_club
   end
 
   def test_uninitialized_has_one_through_should_return_nil_for_unsaved_record

@@ -165,6 +165,12 @@ XML
       raise "boom!"
     end
 
+    def increment_count
+      @counter ||= 0
+      @counter += 1
+      render plain: @counter
+    end
+
     private
       def generate_url(opts)
         url_for(opts.merge(action: "test_uri"))
@@ -177,7 +183,7 @@ XML
     @request.delete_header "PATH_INFO"
     @routes = ActionDispatch::Routing::RouteSet.new.tap do |r|
       r.draw do
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get ":controller(/:action(/:id))"
         end
       end
@@ -655,7 +661,7 @@ XML
       set.draw do
         get "file/*path", to: "test_case_test/test#test_params"
 
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get ":controller/:action"
         end
       end
@@ -883,17 +889,6 @@ XML
     assert_equal new_content_type, file.content_type
   end
 
-  def test_fixture_path_is_accessed_from_self_instead_of_active_support_test_case
-    TestCaseTest.stub :fixture_path, File.expand_path("../fixtures", __dir__) do
-      expected = "`fixture_file_upload(\"multipart/ruby_on_rails.jpg\")` to `fixture_file_upload(\"ruby_on_rails.jpg\")`"
-
-      assert_deprecated(expected) do
-        uploaded_file = fixture_file_upload("multipart/ruby_on_rails.jpg", "image/png")
-        assert_equal File.open("#{FILES_DIR}/ruby_on_rails.jpg", READ_PLAIN).read, uploaded_file.read
-      end
-    end
-  end
-
   def test_test_uploaded_file_with_binary
     filename = "ruby_on_rails.jpg"
     path = "#{FILES_DIR}/#{filename}"
@@ -909,7 +904,7 @@ XML
   def test_fixture_file_upload_with_binary
     filename = "ruby_on_rails.jpg"
     path = "#{FILES_DIR}/#{filename}"
-    content_type = "image/jpg"
+    content_type = "image/jpeg"
 
     binary_file_upload = fixture_file_upload(path, content_type, :binary)
     assert_equal File.open(path, READ_BINARY).read, binary_file_upload.read
@@ -919,56 +914,27 @@ XML
   end
 
   def test_fixture_file_upload_should_be_able_access_to_tempfile
-    file = fixture_file_upload(FILES_DIR + "/ruby_on_rails.jpg", "image/jpg")
+    file = fixture_file_upload(FILES_DIR + "/ruby_on_rails.jpg", "image/jpeg")
     assert_respond_to file, :tempfile
   end
 
   def test_fixture_file_upload
     post :test_file_upload,
       params: {
-        file: fixture_file_upload(FILES_DIR + "/ruby_on_rails.jpg", "image/jpg")
+        file: fixture_file_upload(FILES_DIR + "/ruby_on_rails.jpg", "image/jpeg")
       }
     assert_equal "45142", @response.body
   end
 
-  def test_fixture_file_upload_output_deprecation_when_file_fixture_path_is_not_set
-    TestCaseTest.stub :fixture_path, File.expand_path("../fixtures", __dir__) do
-      TestCaseTest.stub :file_fixture_path, nil do
-        assert_deprecated(/In Rails 6.2, the path needs to be relative to `file_fixture_path`/) do
-          fixture_file_upload("multipart/ruby_on_rails.jpg", "image/jpg")
-        end
-      end
-    end
-  end
-
-  def test_fixture_file_upload_does_not_output_deprecation_when_file_fixture_path_is_set
-    TestCaseTest.stub :fixture_path, File.expand_path("../fixtures", __dir__) do
-      assert_not_deprecated do
-        fixture_file_upload("ruby_on_rails.jpg", "image/jpg")
-      end
-    end
-  end
-
-  def test_fixture_file_upload_relative_to_fixture_path
-    TestCaseTest.stub :fixture_path, File.expand_path("../fixtures", __dir__) do
-      expected = "`fixture_file_upload(\"multipart/ruby_on_rails.jpg\")` to `fixture_file_upload(\"ruby_on_rails.jpg\")`"
-
-      assert_deprecated(expected) do
-        uploaded_file = fixture_file_upload("multipart/ruby_on_rails.jpg", "image/jpg")
-        assert_equal File.open("#{FILES_DIR}/ruby_on_rails.jpg", READ_PLAIN).read, uploaded_file.read
-      end
-    end
-  end
-
   def test_fixture_file_upload_ignores_fixture_path_given_full_path
     TestCaseTest.stub :fixture_path, __dir__ do
-      uploaded_file = fixture_file_upload("#{FILES_DIR}/ruby_on_rails.jpg", "image/jpg")
+      uploaded_file = fixture_file_upload("#{FILES_DIR}/ruby_on_rails.jpg", "image/jpeg")
       assert_equal File.open("#{FILES_DIR}/ruby_on_rails.jpg", READ_PLAIN).read, uploaded_file.read
     end
   end
 
   def test_fixture_file_upload_ignores_nil_fixture_path
-    uploaded_file = fixture_file_upload("#{FILES_DIR}/ruby_on_rails.jpg", "image/jpg")
+    uploaded_file = fixture_file_upload("#{FILES_DIR}/ruby_on_rails.jpg", "image/jpeg")
     assert_equal File.open("#{FILES_DIR}/ruby_on_rails.jpg", READ_PLAIN).read, uploaded_file.read
   end
 
@@ -976,7 +942,7 @@ XML
     filename = "ruby_on_rails.jpg"
     path = "#{FILES_DIR}/#{filename}"
     post :test_file_upload, params: {
-      file: Rack::Test::UploadedFile.new(path, "image/jpg", true)
+      file: Rack::Test::UploadedFile.new(path, "image/jpeg", true)
     }
     assert_equal "45142", @response.body
   end
@@ -1028,6 +994,56 @@ XML
     post :render_json, body: { foo: "heyo" }.to_json, as: :json
     assert_equal({ "foo" => "heyo" }, response.parsed_body)
   end
+
+  def test_reset_instance_variables_after_each_request
+    get :increment_count
+    assert_equal "1", response.body
+
+    get :increment_count
+    assert_equal "1", response.body
+  end
+
+  def test_can_read_instance_variables_before_and_after_request
+    silence_warnings do
+      assert_nil @controller.instance_variable_get(:@counter)
+    end
+
+    get :increment_count
+    assert_equal "1", response.body
+    assert_equal 1, @controller.instance_variable_get(:@counter)
+
+    get :increment_count
+    assert_equal "1", response.body
+    assert_equal 1, @controller.instance_variable_get(:@counter)
+  end
+
+  def test_ivars_are_not_reset_if_they_are_given_a_value_before_any_requests
+    @controller.instance_variable_set(:@counter, 3)
+
+    get :increment_count
+    assert_equal "4", response.body
+    assert_equal 4, @controller.instance_variable_get(:@counter)
+
+    get :increment_count
+    assert_equal "5", response.body
+    assert_equal 5, @controller.instance_variable_get(:@counter)
+
+    get :increment_count
+    assert_equal "6", response.body
+    assert_equal 6, @controller.instance_variable_get(:@counter)
+  end
+
+  def test_ivars_are_reset_if_they_are_given_a_value_after_some_requests
+    get :increment_count
+    assert_equal "1", response.body
+    assert_equal 1, @controller.instance_variable_get(:@counter)
+
+    @controller.instance_variable_set(:@counter, 3)
+
+    get :increment_count
+    assert_equal "1", response.body
+    assert_equal 1, @controller.instance_variable_get(:@counter)
+  end
 end
 
 class ResponseDefaultHeadersTest < ActionController::TestCase
@@ -1060,7 +1076,7 @@ class ResponseDefaultHeadersTest < ActionController::TestCase
     @request.env["PATH_INFO"] = nil
     @routes = ActionDispatch::Routing::RouteSet.new.tap do |r|
       r.draw do
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get ":controller(/:action(/:id))"
         end
       end
@@ -1143,7 +1159,7 @@ class InferringClassNameTest < ActionController::TestCase
     end
 end
 
-class CrazyNameTest < ActionController::TestCase
+class ManuallySetNameTest < ActionController::TestCase
   tests ContentController
 
   def test_controller_class_can_be_set_manually_not_just_inferred
@@ -1151,7 +1167,7 @@ class CrazyNameTest < ActionController::TestCase
   end
 end
 
-class CrazySymbolNameTest < ActionController::TestCase
+class ManuallySetSymbolNameTest < ActionController::TestCase
   tests :content
 
   def test_set_controller_class_using_symbol
@@ -1159,7 +1175,7 @@ class CrazySymbolNameTest < ActionController::TestCase
   end
 end
 
-class CrazyStringNameTest < ActionController::TestCase
+class ManuallySetStringNameTest < ActionController::TestCase
   tests "content"
 
   def test_set_controller_class_using_string
@@ -1189,7 +1205,7 @@ class AnonymousControllerTest < ActionController::TestCase
 
     @routes = ActionDispatch::Routing::RouteSet.new.tap do |r|
       r.draw do
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get ":controller(/:action(/:id))"
         end
       end

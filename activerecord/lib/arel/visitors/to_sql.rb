@@ -103,7 +103,7 @@ module Arel # :nodoc: all
             row.each_with_index do |value, k|
               collector << ", " unless k == 0
               case value
-              when Nodes::SqlLiteral, Nodes::BindParam
+              when Nodes::SqlLiteral, Nodes::BindParam, ActiveModel::Attribute
                 collector = visit(value, collector)
               else
                 collector << quote(value).to_s
@@ -135,6 +135,8 @@ module Arel # :nodoc: all
           visit_Arel_Nodes_SelectOptions(o, collector)
         end
 
+        # The Oracle enhanced adapter uses this private method,
+        # see https://github.com/rsim/oracle-enhanced/issues/2186
         def visit_Arel_Nodes_SelectOptions(o, collector)
           collector = maybe_visit o.limit, collector
           collector = maybe_visit o.offset, collector
@@ -243,6 +245,13 @@ module Arel # :nodoc: all
           collector << ")"
         end
 
+        def visit_Arel_Nodes_Filter(o, collector)
+          visit o.left, collector
+          collector << " FILTER (WHERE "
+          visit o.right, collector
+          collector << ")"
+        end
+
         def visit_Arel_Nodes_Rows(o, collector)
           if o.expr
             collector << "ROWS "
@@ -337,7 +346,7 @@ module Arel # :nodoc: all
           if values.empty?
             collector << @connection.quote(nil)
           else
-            collector.add_binds(values, &bind_block)
+            collector.add_binds(values, o.proc_for_binds, &bind_block)
           end
 
           collector << ")"
@@ -355,6 +364,17 @@ module Arel # :nodoc: all
 
         def visit_Arel_Nodes_Descending(o, collector)
           visit(o.expr, collector) << " DESC"
+        end
+
+        # NullsFirst is available on all but MySQL, where it is redefined.
+        def visit_Arel_Nodes_NullsFirst(o, collector)
+          visit o.expr, collector
+          collector << " NULLS FIRST"
+        end
+
+        def visit_Arel_Nodes_NullsLast(o, collector)
+          visit o.expr, collector
+          collector << " NULLS LAST"
         end
 
         def visit_Arel_Nodes_Group(o, collector)
@@ -412,24 +432,48 @@ module Arel # :nodoc: all
         end
 
         def visit_Arel_Nodes_GreaterThanOrEqual(o, collector)
+          case unboundable?(o.right)
+          when 1
+            return collector << "1=0"
+          when -1
+            return collector << "1=1"
+          end
           collector = visit o.left, collector
           collector << " >= "
           visit o.right, collector
         end
 
         def visit_Arel_Nodes_GreaterThan(o, collector)
+          case unboundable?(o.right)
+          when 1
+            return collector << "1=0"
+          when -1
+            return collector << "1=1"
+          end
           collector = visit o.left, collector
           collector << " > "
           visit o.right, collector
         end
 
         def visit_Arel_Nodes_LessThanOrEqual(o, collector)
+          case unboundable?(o.right)
+          when 1
+            return collector << "1=1"
+          when -1
+            return collector << "1=0"
+          end
           collector = visit o.left, collector
           collector << " <= "
           visit o.right, collector
         end
 
         def visit_Arel_Nodes_LessThan(o, collector)
+          case unboundable?(o.right)
+          when 1
+            return collector << "1=1"
+          when -1
+            return collector << "1=0"
+          end
           collector = visit o.left, collector
           collector << " < "
           visit o.right, collector
@@ -585,7 +629,7 @@ module Arel # :nodoc: all
 
         def visit_Arel_Nodes_Assignment(o, collector)
           case o.right
-          when Arel::Nodes::Node, Arel::Attributes::Attribute
+          when Arel::Nodes::Node, Arel::Attributes::Attribute, ActiveModel::Attribute
             collector = visit o.left, collector
             collector << " = "
             visit o.right, collector
@@ -695,6 +739,10 @@ module Arel # :nodoc: all
 
         def bind_block; BIND_BLOCK; end
 
+        def visit_ActiveModel_Attribute(o, collector)
+          collector.add_bind(o, &bind_block)
+        end
+
         def visit_Arel_Nodes_BindParam(o, collector)
           collector.add_bind(o.value, &bind_block)
         end
@@ -742,6 +790,10 @@ module Arel # :nodoc: all
           inject_join o, collector, ", "
         end
         alias :visit_Set :visit_Array
+
+        def visit_Arel_Nodes_Fragments(o, collector)
+          inject_join o.values, collector, " "
+        end
 
         def quote(value)
           return value if Arel::Nodes::SqlLiteral === value
@@ -793,6 +845,10 @@ module Arel # :nodoc: all
           o.limit || o.offset || !o.orders.empty?
         end
 
+        def has_group_by_and_having?(o)
+          !o.groups.empty? && !o.havings.empty?
+        end
+
         # The default strategy for an UPDATE with joins is to use a subquery. This doesn't work
         # on MySQL (even when aliasing the tables), but MySQL allows using JOIN directly in
         # an UPDATE statement, so in the MySQL visitor we redefine this to do that.
@@ -804,6 +860,8 @@ module Arel # :nodoc: all
             stmt.orders = []
             stmt.wheres = [Nodes::In.new(o.key, [build_subselect(o.key, o)])]
             stmt.relation = o.relation.left if has_join_sources?(o)
+            stmt.groups = o.groups unless o.groups.empty?
+            stmt.havings = o.havings unless o.havings.empty?
             stmt
           else
             o
@@ -818,6 +876,8 @@ module Arel # :nodoc: all
           core.froms       = o.relation
           core.wheres      = o.wheres
           core.projections = [key]
+          core.groups      = o.groups unless o.groups.empty?
+          core.havings     = o.havings unless o.havings.empty?
           stmt.limit       = o.limit
           stmt.offset      = o.offset
           stmt.orders      = o.orders

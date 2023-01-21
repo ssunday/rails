@@ -172,6 +172,12 @@ class EachTest < ActiveRecord::TestCase
     end
   end
 
+  def test_in_batches_without_block_should_raise_if_order_is_invalid
+    assert_raise(ArgumentError) do
+      Post.select(:title).in_batches(order: :invalid)
+    end
+  end
+
   def test_find_in_batches_should_not_use_records_after_yielding_them_in_case_original_array_is_modified
     not_a_post = +"not a post"
     def not_a_post.id; end
@@ -207,26 +213,26 @@ class EachTest < ActiveRecord::TestCase
 
   def test_find_in_batches_should_not_error_if_config_overridden
     # Set the config option which will be overridden
-    prev = ActiveRecord::Base.error_on_ignored_order
-    ActiveRecord::Base.error_on_ignored_order = true
+    prev = ActiveRecord.error_on_ignored_order
+    ActiveRecord.error_on_ignored_order = true
     assert_nothing_raised do
       PostWithDefaultScope.find_in_batches(error_on_ignore: false) { }
     end
   ensure
     # Set back to default
-    ActiveRecord::Base.error_on_ignored_order = prev
+    ActiveRecord.error_on_ignored_order = prev
   end
 
   def test_find_in_batches_should_error_on_config_specified_to_error
     # Set the config option
-    prev = ActiveRecord::Base.error_on_ignored_order
-    ActiveRecord::Base.error_on_ignored_order = true
+    prev = ActiveRecord.error_on_ignored_order
+    ActiveRecord.error_on_ignored_order = true
     assert_raise(ArgumentError) do
       PostWithDefaultScope.find_in_batches() { }
     end
   ensure
     # Set back to default
-    ActiveRecord::Base.error_on_ignored_order = prev
+    ActiveRecord.error_on_ignored_order = prev
   end
 
   def test_find_in_batches_should_not_error_by_default
@@ -304,6 +310,14 @@ class EachTest < ActiveRecord::TestCase
     assert_no_queries do
       assert_kind_of ActiveRecord::Batches::BatchEnumerator, Post.in_batches(of: 2)
     end
+  end
+
+  def test_in_batches_has_attribute_readers
+    enumerator = Post.no_comments.in_batches(of: 2, start: 42, finish: 84)
+    assert_equal Post.no_comments, enumerator.relation
+    assert_equal 2, enumerator.batch_size
+    assert_equal 42, enumerator.start
+    assert_equal 84, enumerator.finish
   end
 
   def test_in_batches_should_yield_relation_if_block_given
@@ -427,6 +441,46 @@ class EachTest < ActiveRecord::TestCase
     end
   end
 
+  def test_in_batches_executes_range_queries_when_unconstrained
+    c = Post.connection
+    quoted_posts_id = Regexp.escape(c.quote_table_name("posts.id"))
+    assert_sql(/WHERE #{quoted_posts_id} > .+ AND #{quoted_posts_id} <= .+/i) do
+      Post.in_batches(of: 2) { |relation| assert_kind_of Post, relation.first }
+    end
+  end
+
+  def test_in_batches_executes_in_queries_when_unconstrained_and_opted_out_of_ranges
+    c = Post.connection
+    quoted_posts_id = Regexp.escape(c.quote_table_name("posts.id"))
+    assert_sql(/#{quoted_posts_id} IN \(.+\)/i) do
+      Post.in_batches(of: 2, use_ranges: false) { |relation| assert_kind_of Post, relation.first }
+    end
+  end
+
+  def test_in_batches_executes_in_queries_when_constrained
+    c = Post.connection
+    quoted_posts_id = Regexp.escape(c.quote_table_name("posts.id"))
+    assert_sql(/#{quoted_posts_id} IN \(.+\)/i) do
+      Post.where("id < ?", 5).in_batches(of: 2) { |relation| assert_kind_of Post, relation.first }
+    end
+  end
+
+  def test_in_batches_executes_range_queries_when_constrained_and_opted_in_into_ranges
+    c = Post.connection
+    quoted_posts_id = Regexp.escape(c.quote_table_name("posts.id"))
+    assert_sql(/#{quoted_posts_id} > .+ AND #{quoted_posts_id} <= .+/i) do
+      Post.where("id < ?", 5).in_batches(of: 2, use_ranges: true) { |relation| assert_kind_of Post, relation.first }
+    end
+  end
+
+  def test_in_batches_no_subqueries_for_whole_tables_batching
+    c = Post.connection
+    quoted_posts_id = Regexp.escape(c.quote_table_name("posts.id"))
+    assert_sql(/DELETE FROM #{c.quote_table_name("posts")} WHERE #{quoted_posts_id} > .+ AND #{quoted_posts_id} <=/i) do
+      Post.in_batches(of: 2).delete_all
+    end
+  end
+
   def test_in_batches_shouldnt_execute_query_unless_needed
     assert_queries(2) do
       Post.in_batches(of: @total) { |relation| assert_kind_of ActiveRecord::Relation, relation }
@@ -453,6 +507,24 @@ class EachTest < ActiveRecord::TestCase
       Post.in_batches(of: 1, order: :desc) do |relation|
         assert_kind_of ActiveRecord::Relation, relation
         assert_kind_of Post, relation.first
+      end
+    end
+  end
+
+  def test_in_batches_enumerator_should_quote_batch_order_with_desc_order
+    c = Post.connection
+    assert_sql(/ORDER BY #{Regexp.escape(c.quote_table_name("posts.id"))} DESC/) do
+      relation = Post.in_batches(of: 1, order: :desc).first
+      assert_kind_of ActiveRecord::Relation, relation
+      assert_kind_of Post, relation.first
+    end
+  end
+
+  def test_in_batches_enumerator_each_record_should_quote_batch_order_with_desc_order
+    c = Post.connection
+    assert_sql(/ORDER BY #{Regexp.escape(c.quote_table_name("posts.id"))} DESC/) do
+      Post.in_batches(of: 1, order: :desc).each_record do |record|
+        assert_kind_of Post, record
       end
     end
   end

@@ -10,13 +10,12 @@ module ActiveRecord
         end
 
         # Queries the database and returns the results in an Array-like object
-        def query(sql, name = nil) #:nodoc:
-          materialize_transactions
+        def query(sql, name = nil) # :nodoc:
           mark_transaction_written_if_write(sql)
 
           log(sql, name) do
-            ActiveSupport::Dependencies.interlock.permit_concurrent_loads do
-              @connection.async_exec(sql).map_types!(@type_map_for_results).values
+            with_raw_connection do |conn|
+              conn.async_exec(sql).map_types!(@type_map_for_results).values
             end
           end
         end
@@ -28,45 +27,61 @@ module ActiveRecord
 
         def write_query?(sql) # :nodoc:
           !READ_QUERY.match?(sql)
+        rescue ArgumentError # Invalid encoding
+          !READ_QUERY.match?(sql.b)
         end
 
         # Executes an SQL statement, returning a PG::Result object on success
         # or raising a PG::Error exception otherwise.
+        #
+        # Setting +allow_retry+ to true causes the db to reconnect and retry
+        # executing the SQL statement in case of a connection-related exception.
+        # This option should only be enabled for known idempotent queries.
+        #
         # Note: the PG::Result object is manually memory managed; if you don't
         # need it specifically, you may want consider the <tt>exec_query</tt> wrapper.
-        def execute(sql, name = nil)
-          if preventing_writes? && write_query?(sql)
-            raise ActiveRecord::ReadOnlyError, "Write query attempted while in readonly mode: #{sql}"
-          end
+        def execute(sql, name = nil, allow_retry: false)
+          sql = transform_query(sql)
+          check_if_write_query(sql)
 
-          materialize_transactions
           mark_transaction_written_if_write(sql)
 
-          log(sql, name) do
-            ActiveSupport::Dependencies.interlock.permit_concurrent_loads do
-              @connection.async_exec(sql)
+          with_raw_connection(allow_retry: allow_retry) do |conn|
+            log(sql, name) do
+              result = conn.async_exec(sql)
+              handle_warnings(sql)
+              result
+            end
+          end
+        ensure
+          @notice_receiver_sql_warnings = []
+        end
+
+        def internal_execute(sql, name = "SCHEMA", allow_retry: true, uses_transaction: false)
+          sql = transform_query(sql)
+          check_if_write_query(sql)
+
+          with_raw_connection(allow_retry: allow_retry, uses_transaction: uses_transaction) do |conn|
+            log(sql, name) do
+              conn.async_exec(sql)
             end
           end
         end
 
-        def exec_query(sql, name = "SQL", binds = [], prepare: false)
-          execute_and_clear(sql, name, binds, prepare: prepare) do |result|
+        def exec_query(sql, name = "SQL", binds = [], prepare: false, async: false, allow_retry: false, uses_transaction: true) # :nodoc:
+          execute_and_clear(sql, name, binds, prepare: prepare, async: async, allow_retry: allow_retry, uses_transaction: uses_transaction) do |result|
             types = {}
             fields = result.fields
             fields.each_with_index do |fname, i|
               ftype = result.ftype i
               fmod  = result.fmod i
-              case type = get_oid_type(ftype, fmod, fname)
-              when Type::Integer, Type::Float, Type::Decimal, Type::String, Type::DateTime, Type::Boolean
-                # skip if a column has already been type casted by pg decoders
-              else types[fname] = type
-              end
+              types[fname] = get_oid_type(ftype, fmod, fname)
             end
             build_result(columns: fields, rows: result.values, column_types: types)
           end
         end
 
-        def exec_delete(sql, name = nil, binds = [])
+        def exec_delete(sql, name = nil, binds = []) # :nodoc:
           execute_and_clear(sql, name, binds) { |result| result.cmd_tuples }
         end
         alias :exec_update :exec_delete
@@ -86,7 +101,7 @@ module ActiveRecord
         end
         private :sql_for_insert
 
-        def exec_insert(sql, name = nil, binds = [], pk = nil, sequence_name = nil)
+        def exec_insert(sql, name = nil, binds = [], pk = nil, sequence_name = nil) # :nodoc:
           if use_insert_returning? || pk == false
             super
           else
@@ -105,26 +120,46 @@ module ActiveRecord
         end
 
         # Begins a transaction.
-        def begin_db_transaction
-          execute("BEGIN", "TRANSACTION")
+        def begin_db_transaction # :nodoc:
+          internal_execute("BEGIN", "TRANSACTION")
         end
 
-        def begin_isolated_db_transaction(isolation)
-          begin_db_transaction
-          execute "SET TRANSACTION ISOLATION LEVEL #{transaction_isolation_levels.fetch(isolation)}"
+        def begin_isolated_db_transaction(isolation) # :nodoc:
+          internal_execute("BEGIN ISOLATION LEVEL #{transaction_isolation_levels.fetch(isolation)}", "TRANSACTION")
         end
 
         # Commits a transaction.
-        def commit_db_transaction
-          execute("COMMIT", "TRANSACTION")
+        def commit_db_transaction # :nodoc:
+          internal_execute("COMMIT", "TRANSACTION", allow_retry: false, uses_transaction: true)
         end
 
         # Aborts a transaction.
-        def exec_rollback_db_transaction
-          execute("ROLLBACK", "TRANSACTION")
+        def exec_rollback_db_transaction # :nodoc:
+          cancel_any_running_query
+          internal_execute("ROLLBACK", "TRANSACTION", allow_retry: false, uses_transaction: true)
+        end
+
+        def exec_restart_db_transaction # :nodoc:
+          cancel_any_running_query
+          internal_execute("ROLLBACK AND CHAIN", "TRANSACTION", allow_retry: false, uses_transaction: true)
+        end
+
+        # From https://www.postgresql.org/docs/current/functions-datetime.html#FUNCTIONS-DATETIME-CURRENT
+        HIGH_PRECISION_CURRENT_TIMESTAMP = Arel.sql("CURRENT_TIMESTAMP").freeze # :nodoc:
+        private_constant :HIGH_PRECISION_CURRENT_TIMESTAMP
+
+        def high_precision_current_timestamp
+          HIGH_PRECISION_CURRENT_TIMESTAMP
         end
 
         private
+          def cancel_any_running_query
+            return unless @raw_connection && @raw_connection.transaction_status != PG::PQTRANS_IDLE
+            @raw_connection.cancel
+            @raw_connection.block
+          rescue PG::Error
+          end
+
           def execute_batch(statements, name = nil)
             execute(combine_multi_statements(statements))
           end
@@ -140,6 +175,21 @@ module ActiveRecord
 
           def suppress_composite_primary_key(pk)
             pk unless pk.is_a?(Array)
+          end
+
+          def handle_warnings(sql)
+            return if ActiveRecord.db_warnings_action.nil?
+
+            @notice_receiver_sql_warnings.each do |warning|
+              next if warning_ignored?(warning)
+
+              warning.sql = sql
+              ActiveRecord.db_warnings_action.call(warning)
+            end
+          end
+
+          def warning_ignored?(warning)
+            ["WARNING", "ERROR", "FATAL", "PANIC"].exclude?(warning.level) || super
           end
       end
     end

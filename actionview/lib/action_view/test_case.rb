@@ -24,6 +24,10 @@ module ActionView
         self.class.controller_path = path
       end
 
+      def self.controller_name
+        "test"
+      end
+
       def initialize
         super
         self.class.controller_path = ""
@@ -53,7 +57,7 @@ module ActionView
       include ActiveSupport::Testing::ConstantLookup
 
       delegate :lookup_context, to: :controller
-      attr_accessor :controller, :output_buffer, :rendered
+      attr_accessor :controller, :request, :output_buffer, :rendered
 
       module ClassMethods
         def tests(helper_class)
@@ -74,11 +78,11 @@ module ActionView
         def helper_method(*methods)
           # Almost a duplicate from ActionController::Helpers
           methods.flatten.each do |method|
-            _helpers_for_modification.module_eval <<-end_eval, __FILE__, __LINE__ + 1
+            _helpers_for_modification.module_eval <<~end_eval, __FILE__, __LINE__ + 1
               def #{method}(*args, &block)                    # def current_user(*args, &block)
                 _test_case.send(:'#{method}', *args, &block)  #   _test_case.send(:'current_user', *args, &block)
               end                                             # end
-              ruby2_keywords(:'#{method}') if respond_to?(:ruby2_keywords, true)
+              ruby2_keywords(:'#{method}')
             end_eval
           end
         end
@@ -106,9 +110,7 @@ module ActionView
         @controller = controller_class.new
         @request = @controller.request
         @view_flow = ActionView::OutputFlow.new
-        # empty string ensures buffer has UTF-8 encoding as
-        # new without arguments returns ASCII-8BIT encoded buffer like String#new
-        @output_buffer = ActiveSupport::SafeBuffer.new ""
+        @output_buffer = ActionView::OutputBuffer.new
         @rendered = +""
 
         test_case_instance = self
@@ -177,7 +179,7 @@ module ActionView
     private
       # Need to experiment if this priority is the best one: rendered => output_buffer
       def document_root_element
-        Nokogiri::HTML::Document.parse(@rendered.blank? ? @output_buffer : @rendered).root
+        Nokogiri::HTML::Document.parse(@rendered.blank? ? @output_buffer.to_str : @rendered).root
       end
 
       module Locals
@@ -223,6 +225,10 @@ module ActionView
         :@_result,
         :@_routes,
         :@controller,
+        :@_controller,
+        :@_request,
+        :@_config,
+        :@_default_form_builder,
         :@_layouts,
         :@_files,
         :@_rendered_views,
@@ -241,7 +247,7 @@ module ActionView
         :@view_context_class,
         :@view_flow,
         :@_subscribers,
-        :@html_document
+        :@html_document,
       ]
 
       def _user_defined_ivars

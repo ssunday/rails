@@ -45,7 +45,7 @@ The Executor consists of two callbacks: `to_run` and `to_complete`. The Run
 callback is called before the application code, and the Complete callback is
 called after.
 
-### Default callbacks
+### Default Callbacks
 
 In a default Rails application, the Executor callbacks are used to:
 
@@ -60,7 +60,7 @@ directly wrapping code with methods like
 `ActiveRecord::Base.connection_pool.with_connection`. The Executor replaces
 these with a single more abstract interface.
 
-### Wrapping application code
+### Wrapping Application Code
 
 If you're writing a library or component that will invoke application code, you
 should wrap it with a call to the executor:
@@ -72,7 +72,7 @@ end
 ```
 
 TIP: If you repeatedly invoke application code from a long-running process, you
-may want to wrap using the Reloader instead.
+may want to wrap using the [Reloader](#reloader) instead.
 
 Each thread should be wrapped before it runs application code, so if your
 application manually delegates work to other threads, such as via `Thread.new`
@@ -108,9 +108,10 @@ end
 
 ### Concurrency
 
-The Executor will put the current thread into `running` mode in the Load
-Interlock. This operation will block temporarily if another thread is currently
-either autoloading a constant or unloading/reloading the application.
+The Executor will put the current thread into `running` mode in the [Load
+Interlock](#load-interlock). This operation will block temporarily if another
+thread is currently either autoloading a constant or unloading/reloading
+the application.
 
 Reloader
 --------
@@ -199,18 +200,19 @@ additional threads.
 
 ### Configuration
 
-The Reloader only checks for file changes when `cache_classes` is false and
-`reload_classes_only_on_change` is true (which is the default in the
-`development` environment).
+The Reloader only checks for file changes when `config.enable_reloading` is
+`true` and so is `config.reload_classes_only_on_change`. These are the defaults in the
+`development` environment.
 
-When `cache_classes` is true (in `production`, by default), the Reloader is only
-a pass-through to the Executor.
+When `config.enable_reloading` is `false` (in `production`, by default), the
+Reloader is only a pass-through to the Executor.
 
 The Executor always has important work to do, like database connection
-management. When `cache_classes` and `eager_load` are both true (`production`),
-no autoloading or class reloading will occur, so it does not need the Load
-Interlock. If either of those are false (`development`), then the Executor will
-use the Load Interlock to ensure constants are only loaded when it is safe.
+management. When `config.enable_reloading` is `false` and `config.eager_load` is
+`true` (`production` defaults), no reloading will occur, so it does not need the
+Load Interlock. With the default settings in the `development` environment, the
+Executor will use the Load Interlock to ensure constants are only loaded when it
+is safe.
 
 Load Interlock
 --------------
@@ -288,7 +290,7 @@ Another example, using Concurrent Ruby:
 ```ruby
 Rails.application.executor.wrap do
   futures = 3.times.collect do |i|
-    Concurrent::Future.execute do
+    Concurrent::Promises.future do
       Rails.application.executor.wrap do
         # do work here
       end
@@ -300,7 +302,6 @@ Rails.application.executor.wrap do
   end
 end
 ```
-
 
 ### ActionDispatch::DebugLocks
 
@@ -321,4 +322,3 @@ backtrace.
 Generally a deadlock will be caused by the interlock conflicting with some other
 external lock or blocking I/O call. Once you find it, you can wrap it with
 `permit_concurrent_loads`.
-

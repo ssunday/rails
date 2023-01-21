@@ -12,7 +12,7 @@ module ActiveRecord
 
       def setup
         @handler = ConnectionHandler.new
-        @owner_name = "ActiveRecord::Base"
+        @connection_name = "ActiveRecord::Base"
         db_config = ActiveRecord::Base.configurations.configs_for(env_name: "arunit", name: "primary")
         @rw_pool = @handler.establish_connection(db_config)
         @ro_pool = @handler.establish_connection(db_config, role: :reading)
@@ -206,23 +206,6 @@ module ActiveRecord
           ENV["RAILS_ENV"] = previous_env
         end
 
-        def test_switching_connections_with_database_and_role_raises
-          error = assert_raises(ArgumentError) do
-            assert_deprecated do
-              ActiveRecord::Base.connected_to(database: :readonly, role: :writing) { }
-            end
-          end
-          assert_equal "`connected_to` cannot accept a `database` argument with any other arguments.", error.message
-        end
-
-        def test_database_argument_is_deprecated
-          assert_deprecated do
-            ActiveRecord::Base.connected_to(database: { writing: { adapter: "sqlite3", database: "test/db/primary.sqlite3" } }) { }
-          end
-        ensure
-          ActiveRecord::Base.establish_connection(:arunit)
-        end
-
         def test_switching_connections_without_database_and_role_raises
           error = assert_raises(ArgumentError) do
             ActiveRecord::Base.connected_to { }
@@ -336,31 +319,48 @@ module ActiveRecord
         end
       end
 
-      def test_connection_pools
-        assert_equal([@rw_pool], @handler.connection_pools(:writing))
-        assert_equal([@ro_pool], @handler.connection_pools(:reading))
+      def test_connection_pool_list
+        assert_equal([@rw_pool], @handler.connection_pool_list(:writing))
+        assert_equal([@ro_pool], @handler.connection_pool_list(:reading))
+
+        assert_deprecated(ActiveRecord.deprecator) do
+          @handler.connection_pool_list
+        end
+      end
+
+      def test_all_connection_pools
+        assert_deprecated(ActiveRecord.deprecator) do
+          assert_equal([@rw_pool, @ro_pool], @handler.all_connection_pools)
+        end
       end
 
       def test_retrieve_connection
-        assert @handler.retrieve_connection(@owner_name)
-        assert @handler.retrieve_connection(@owner_name, role: :reading)
+        assert @handler.retrieve_connection(@connection_name)
+        assert @handler.retrieve_connection(@connection_name, role: :reading)
       end
 
       def test_active_connections?
-        assert_not_predicate @handler, :active_connections?
+        assert_deprecated(ActiveRecord.deprecator) do
+          assert_not_predicate @handler, :active_connections?
+        end
 
-        assert @handler.retrieve_connection(@owner_name)
-        assert @handler.retrieve_connection(@owner_name, role: :reading)
+        assert @handler.retrieve_connection(@connection_name)
+        assert @handler.retrieve_connection(@connection_name, role: :reading)
 
-        assert_predicate @handler, :active_connections?
+        assert_deprecated(ActiveRecord.deprecator) do
+          assert_predicate @handler, :active_connections?
+        end
 
-        @handler.clear_active_connections!
-        assert_not_predicate @handler, :active_connections?
+        @handler.clear_active_connections!(:all)
+
+        assert_deprecated(ActiveRecord.deprecator) do
+          assert_not_predicate @handler, :active_connections?
+        end
       end
 
       def test_retrieve_connection_pool
-        assert_not_nil @handler.retrieve_connection_pool(@owner_name)
-        assert_not_nil @handler.retrieve_connection_pool(@owner_name, role: :reading)
+        assert_not_nil @handler.retrieve_connection_pool(@connection_name)
+        assert_not_nil @handler.retrieve_connection_pool(@connection_name, role: :reading)
       end
 
       def test_retrieve_connection_pool_with_invalid_id
@@ -379,21 +379,21 @@ module ActiveRecord
       end
 
       def test_default_handlers_are_writing_and_reading
-        assert_equal :writing, ActiveRecord::Base.writing_role
-        assert_equal :reading, ActiveRecord::Base.reading_role
+        assert_equal :writing, ActiveRecord.writing_role
+        assert_equal :reading, ActiveRecord.reading_role
       end
 
       def test_an_application_can_change_the_default_handlers
-        old_writing = ActiveRecord::Base.writing_role
-        old_reading = ActiveRecord::Base.reading_role
-        ActiveRecord::Base.writing_role = :default
-        ActiveRecord::Base.reading_role = :readonly
+        old_writing = ActiveRecord.writing_role
+        old_reading = ActiveRecord.reading_role
+        ActiveRecord.writing_role = :default
+        ActiveRecord.reading_role = :readonly
 
-        assert_equal :default, ActiveRecord::Base.writing_role
-        assert_equal :readonly, ActiveRecord::Base.reading_role
+        assert_equal :default, ActiveRecord.writing_role
+        assert_equal :readonly, ActiveRecord.reading_role
       ensure
-        ActiveRecord::Base.writing_role = old_writing
-        ActiveRecord::Base.reading_role = old_reading
+        ActiveRecord.writing_role = old_writing
+        ActiveRecord.reading_role = old_reading
       end
     end
   end

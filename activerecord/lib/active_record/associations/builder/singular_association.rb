@@ -3,7 +3,7 @@
 # This class is inherited by the has_one and belongs_to association classes
 
 module ActiveRecord::Associations::Builder # :nodoc:
-  class SingularAssociation < Association #:nodoc:
+  class SingularAssociation < Association # :nodoc:
     def self.valid_options(options)
       super + [:required, :touch]
     end
@@ -18,6 +18,10 @@ module ActiveRecord::Associations::Builder # :nodoc:
       mixin.class_eval <<-CODE, __FILE__, __LINE__ + 1
         def reload_#{name}
           association(:#{name}).force_reload_reader
+        end
+
+        def reset_#{name}
+          association(:#{name}).reset
         end
       CODE
     end

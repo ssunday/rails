@@ -9,10 +9,6 @@ module ActiveSupport
   module LoggerThreadSafeLevel # :nodoc:
     extend ActiveSupport::Concern
 
-    included do
-      cattr_accessor :local_levels, default: Concurrent::Map.new(initial_capacity: 2), instance_accessor: false
-    end
-
     Logger::Severity.constants.each do |severity|
       class_eval(<<-EOT, __FILE__, __LINE__ + 1)
         def #{severity.downcase}?                # def debug?
@@ -21,24 +17,23 @@ module ActiveSupport
       EOT
     end
 
-    def local_log_id
-      Fiber.current.__id__
-    end
-
     def local_level
-      self.class.local_levels[local_log_id]
+      IsolatedExecutionState[local_level_key]
     end
 
     def local_level=(level)
       case level
       when Integer
-        self.class.local_levels[local_log_id] = level
       when Symbol
-        self.class.local_levels[local_log_id] = Logger::Severity.const_get(level.to_s.upcase)
+        level = Logger::Severity.const_get(level.to_s.upcase)
       when nil
-        self.class.local_levels.delete(local_log_id)
       else
         raise ArgumentError, "Invalid log level: #{level.inspect}"
+      end
+      if level.nil?
+        IsolatedExecutionState.delete(local_level_key)
+      else
+        IsolatedExecutionState[local_level_key] = level
       end
     end
 
@@ -54,25 +49,9 @@ module ActiveSupport
       self.local_level = old_local_level
     end
 
-    # Redefined to check severity against #level, and thus the thread-local level, rather than +@level+.
-    # FIXME: Remove when the minimum Ruby version supports overriding Logger#level.
-    def add(severity, message = nil, progname = nil, &block) #:nodoc:
-      severity ||= UNKNOWN
-      progname ||= @progname
-
-      return true if @logdev.nil? || severity < level
-
-      if message.nil?
-        if block_given?
-          message  = yield
-        else
-          message  = progname
-          progname = @progname
-        end
+    private
+      def local_level_key
+        @local_level_key ||= :"logger_thread_safe_level_#{object_id}"
       end
-
-      @logdev.write \
-        format_message(format_severity(severity), Time.now, progname, message)
-    end
   end
 end

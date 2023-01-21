@@ -6,7 +6,7 @@ class Topic
   include ActiveModel::AttributeMethods
   include ActiveSupport::NumberHelper
 
-  attribute_method_suffix "_before_type_cast"
+  attribute_method_suffix "_before_type_cast", parameters: false
   define_attribute_method :price
 
   def self._validates_default_keys
@@ -47,6 +47,10 @@ class Topic
 
   def price
     number_to_currency @price
+  end
+
+  def raw_price
+    @price
   end
 
   def attribute_before_type_cast(attr)

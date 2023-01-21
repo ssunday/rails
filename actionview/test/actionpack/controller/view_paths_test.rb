@@ -30,6 +30,8 @@ class ViewLoadPathsTest < ActionController::TestCase
   end
 
   def setup
+    ActionView::LookupContext::DetailsKey.clear
+
     @controller = TestController.new
     @request  = ActionController::TestRequest.create(@controller.class)
     @response = ActionDispatch::TestResponse.new
@@ -132,12 +134,10 @@ class ViewLoadPathsTest < ActionController::TestCase
   end
 
   def test_decorate_view_paths_with_custom_resolver
-    decorator_class = Class.new(ActionView::PathResolver) do
+    decorator_class = Class.new(ActionView::Resolver) do
       def initialize(path_set)
         @path_set = path_set
-      end
-
-      def clear_cache
+        super()
       end
 
       def find_all(*args)
@@ -155,7 +155,7 @@ class ViewLoadPathsTest < ActionController::TestCase
     end
 
     decorator = decorator_class.new(TestController.view_paths)
-    TestController.view_paths = ActionView::PathSet.new.push(decorator)
+    TestController.view_paths = ActionView::PathSet.new([decorator])
 
     get :hello_world
     assert_response :success
@@ -165,11 +165,11 @@ class ViewLoadPathsTest < ActionController::TestCase
   def test_inheritance
     original_load_paths = ActionController::Base.view_paths
 
-    self.class.class_eval %{
+    self.class.class_eval <<~RUBY, __FILE__, __LINE__ + 1
       class A < ActionController::Base; end
       class B < A; end
       class C < ActionController::Base; end
-    }
+    RUBY
 
     A.view_paths = ["a/path"]
 

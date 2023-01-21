@@ -40,15 +40,31 @@ connections:
       username: rails
       encoding: utf8mb4
       collation: utf8mb4_unicode_ci
+<% if ENV['MYSQL_PREPARED_STATEMENTS'] %>
+      prepared_statements: true
+<% else %>
+      prepared_statements: false
+<% end %>
 <% if ENV['MYSQL_HOST'] %>
       host: <%= ENV['MYSQL_HOST'] %>
+<% end %>
+<% if ENV['MYSQL_SOCK'] %>
+      socket: "<%= ENV['MYSQL_SOCK'] %>"
 <% end %>
     arunit2:
       username: rails
       encoding: utf8mb4
       collation: utf8mb4_general_ci
+<% if ENV['MYSQL_PREPARED_STATEMENTS'] %>
+      prepared_statements: true
+<% else %>
+      prepared_statements: false
+<% end %>
 <% if ENV['MYSQL_HOST'] %>
       host: <%= ENV['MYSQL_HOST'] %>
+<% end %>
+<% if ENV['MYSQL_SOCK'] %>
+      socket: "<%= ENV['MYSQL_SOCK'] %>"
 <% end %>
 
   oracle:
@@ -78,9 +94,11 @@ connections:
     arunit:
       database: <%= FIXTURES_ROOT %>/fixture_database.sqlite3
       timeout:  5000
+      strict:   true
     arunit2:
       database: <%= FIXTURES_ROOT %>/fixture_database_2.sqlite3
       timeout:  5000
+      strict:   true
 
   sqlite3_mem:
     arunit:

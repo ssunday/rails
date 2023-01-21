@@ -80,6 +80,38 @@ class RedirectController < ActionController::Base
     redirect_back_or_to "http://www.rubyonrails.org/", status: 307, allow_other_host: false
   end
 
+  def safe_redirect_to_root
+    redirect_to url_from("/")
+  end
+
+  def unsafe_redirect
+    redirect_to "http://www.rubyonrails.org/"
+  end
+
+  def unsafe_redirect_back
+    redirect_back_or_to "http://www.rubyonrails.org/"
+  end
+
+  def unsafe_redirect_malformed
+    redirect_to "http:///www.rubyonrails.org/"
+  end
+
+  def unsafe_redirect_protocol_relative_double_slash
+    redirect_to "//www.rubyonrails.org/"
+  end
+
+  def unsafe_redirect_protocol_relative_triple_slash
+    redirect_to "///www.rubyonrails.org/"
+  end
+
+  def only_path_redirect
+    redirect_to action: "other_host", only_path: true
+  end
+
+  def safe_redirect_with_fallback
+    redirect_to url_from(params[:redirect_url]) || "/fallback"
+  end
+
   def redirect_back_with_explicit_fallback_kwarg
     redirect_back(fallback_location: "/things/stuff", status: 307)
   end
@@ -94,6 +126,16 @@ class RedirectController < ActionController::Base
 
   def redirect_to_url
     redirect_to "http://www.rubyonrails.org/"
+  end
+
+  def redirect_to_url_with_stringlike
+    stringlike = Object.new
+
+    def stringlike.to_str
+      "http://www.rubyonrails.org/"
+    end
+
+    redirect_to stringlike
   end
 
   def redirect_to_url_with_unescaped_query_string
@@ -118,6 +160,14 @@ class RedirectController < ActionController::Base
 
   def redirect_to_nil
     redirect_to nil
+  end
+
+  def redirect_to_polymorphic
+    redirect_to [:internal, Workshop.new(5)]
+  end
+
+  def redirect_to_polymorphic_string_args
+    redirect_to ["internal", Workshop.new(5)]
   end
 
   def redirect_to_params
@@ -152,7 +202,7 @@ class RedirectController < ActionController::Base
   def rescue_errors(e) raise e end
 
   private
-    def dashbord_url(id, message)
+    def dashboard_url(id, message)
       url_for action: "dashboard", params: { "id" => id, "message" => message }
     end
 end
@@ -257,6 +307,12 @@ class RedirectTest < ActionController::TestCase
     assert_redirected_to "http://www.rubyonrails.org/"
   end
 
+  def test_redirect_to_url_with_stringlike
+    get :redirect_to_url_with_stringlike
+    assert_response :redirect
+    assert_redirected_to "http://www.rubyonrails.org/"
+  end
+
   def test_redirect_to_url_with_unescaped_query_string
     get :redirect_to_url_with_unescaped_query_string
     assert_response :redirect
@@ -330,6 +386,12 @@ class RedirectTest < ActionController::TestCase
     assert_equal "http://www.rubyonrails.org/", redirect_to_url
   end
 
+  def test_safe_redirect_to_root
+    get :safe_redirect_to_root
+
+    assert_equal "http://test.host/", redirect_to_url
+  end
+
   def test_redirect_back_with_explicit_fallback_kwarg
     referer = "http://www.example.com/coming/from"
     @request.env["HTTP_REFERER"] = referer
@@ -345,7 +407,7 @@ class RedirectTest < ActionController::TestCase
       set.draw do
         resources :workshops
 
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get ":controller/:action"
         end
       end
@@ -357,6 +419,43 @@ class RedirectTest < ActionController::TestCase
       get :redirect_to_new_record
       assert_equal "http://test.host/workshops", redirect_to_url
       assert_redirected_to Workshop.new(nil)
+    end
+  end
+
+  def test_polymorphic_redirect
+    with_routing do |set|
+      set.draw do
+        namespace :internal do
+          resources :workshops
+        end
+
+        ActionDispatch.deprecator.silence do
+          get ":controller/:action"
+        end
+      end
+
+      get :redirect_to_polymorphic
+      assert_equal "http://test.host/internal/workshops/5", redirect_to_url
+      assert_redirected_to [:internal, Workshop.new(5)]
+    end
+  end
+
+  def test_polymorphic_redirect_with_string_args
+    with_routing do |set|
+      set.draw do
+        namespace :internal do
+          resources :workshops
+        end
+
+        ActionDispatch.deprecator.silence do
+          get ":controller/:action"
+        end
+      end
+
+      error = assert_raises(ArgumentError) do
+        get :redirect_to_polymorphic_string_args
+      end
+      assert_equal("Please use symbols for polymorphic route arguments.", error.message)
     end
   end
 
@@ -395,7 +494,7 @@ class RedirectTest < ActionController::TestCase
   def test_redirect_to_with_block_and_accepted_options
     with_routing do |set|
       set.draw do
-        ActiveSupport::Deprecation.silence do
+        ActionDispatch.deprecator.silence do
           get ":controller/:action"
         end
       end
@@ -406,6 +505,93 @@ class RedirectTest < ActionController::TestCase
       assert_redirected_to "http://test.host/redirect/hello_world"
     end
   end
+
+  def test_unsafe_redirect
+    with_raise_on_open_redirects do
+      error = assert_raise(ActionController::Redirecting::UnsafeRedirectError) do
+        get :unsafe_redirect
+      end
+
+      assert_equal "Unsafe redirect to \"http://www.rubyonrails.org/\", pass allow_other_host: true to redirect anyway.", error.message
+    end
+  end
+
+  def test_unsafe_redirect_back
+    with_raise_on_open_redirects do
+      error = assert_raise(ActionController::Redirecting::UnsafeRedirectError) do
+        get :unsafe_redirect_back
+      end
+
+      assert_equal "Unsafe redirect to \"http://www.rubyonrails.org/\", pass allow_other_host: true to redirect anyway.", error.message
+    end
+  end
+
+  def test_unsafe_redirect_with_malformed_url
+    with_raise_on_open_redirects do
+      error = assert_raise(ActionController::Redirecting::UnsafeRedirectError) do
+        get :unsafe_redirect_malformed
+      end
+
+      assert_equal "Unsafe redirect to \"http:///www.rubyonrails.org/\", pass allow_other_host: true to redirect anyway.", error.message
+    end
+  end
+
+  def test_unsafe_redirect_with_protocol_relative_double_slash_url
+    with_raise_on_open_redirects do
+      error = assert_raise(ActionController::Redirecting::UnsafeRedirectError) do
+        get :unsafe_redirect_protocol_relative_double_slash
+      end
+
+      assert_equal "Unsafe redirect to \"//www.rubyonrails.org/\", pass allow_other_host: true to redirect anyway.", error.message
+    end
+  end
+
+  def test_unsafe_redirect_with_protocol_relative_triple_slash_url
+    with_raise_on_open_redirects do
+      error = assert_raise(ActionController::Redirecting::UnsafeRedirectError) do
+        get :unsafe_redirect_protocol_relative_triple_slash
+      end
+
+      assert_equal "Unsafe redirect to \"///www.rubyonrails.org/\", pass allow_other_host: true to redirect anyway.", error.message
+    end
+  end
+
+  def test_only_path_redirect
+    with_raise_on_open_redirects do
+      get :only_path_redirect
+      assert_response :redirect
+      assert_redirected_to "/redirect/other_host"
+    end
+  end
+
+  def test_url_from
+    with_raise_on_open_redirects do
+      get :safe_redirect_with_fallback, params: { redirect_url: "http://test.host/app" }
+      assert_response :redirect
+      assert_redirected_to "http://test.host/app"
+    end
+  end
+
+  def test_url_from_fallback
+    with_raise_on_open_redirects do
+      get :safe_redirect_with_fallback, params: { redirect_url: "http://www.rubyonrails.org/" }
+      assert_response :redirect
+      assert_redirected_to "http://test.host/fallback"
+
+      get :safe_redirect_with_fallback, params: { redirect_url: "" }
+      assert_response :redirect
+      assert_redirected_to "http://test.host/fallback"
+    end
+  end
+
+  private
+    def with_raise_on_open_redirects
+      old_raise_on_open_redirects = ActionController::Base.raise_on_open_redirects
+      ActionController::Base.raise_on_open_redirects = true
+      yield
+    ensure
+      ActionController::Base.raise_on_open_redirects = old_raise_on_open_redirects
+    end
 end
 
 module ModuleTest

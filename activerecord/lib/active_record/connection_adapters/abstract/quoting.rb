@@ -9,38 +9,49 @@ module ActiveRecord
       # Quotes the column value to help prevent
       # {SQL injection attacks}[https://en.wikipedia.org/wiki/SQL_injection].
       def quote(value)
-        if value.is_a?(Base)
-          ActiveSupport::Deprecation.warn(<<~MSG)
-            Passing an Active Record object to `quote` directly is deprecated
-            and will be no longer quoted as id value in Rails 6.2.
-          MSG
-          value = value.id_for_database
+        case value
+        when String, Symbol, ActiveSupport::Multibyte::Chars
+          "'#{quote_string(value.to_s)}'"
+        when true       then quoted_true
+        when false      then quoted_false
+        when nil        then "NULL"
+        # BigDecimals need to be put in a non-normalized form and quoted.
+        when BigDecimal then value.to_s("F")
+        when Numeric then value.to_s
+        when Type::Binary::Data then quoted_binary(value)
+        when Type::Time::Value then "'#{quoted_time(value)}'"
+        when Date, Time then "'#{quoted_date(value)}'"
+        when Class      then "'#{value}'"
+        when ActiveSupport::Duration
+          warn_quote_duration_deprecated
+          value.to_s
+        else raise TypeError, "can't quote #{value.class.name}"
         end
-
-        _quote(value)
       end
 
       # Cast a +value+ to a type that the database understands. For example,
       # SQLite does not understand dates, so this method will convert a Date
       # to a String.
-      def type_cast(value, column = nil)
-        if value.is_a?(Base)
-          ActiveSupport::Deprecation.warn(<<~MSG)
-            Passing an Active Record object to `type_cast` directly is deprecated
-            and will be no longer type casted as id value in Rails 6.2.
-          MSG
-          value = value.id_for_database
+      def type_cast(value)
+        case value
+        when Symbol, ActiveSupport::Multibyte::Chars, Type::Binary::Data
+          value.to_s
+        when true       then unquoted_true
+        when false      then unquoted_false
+        # BigDecimals need to be put in a non-normalized form and quoted.
+        when BigDecimal then value.to_s("F")
+        when nil, Numeric, String then value
+        when Type::Time::Value then quoted_time(value)
+        when Date, Time then quoted_date(value)
+        else raise TypeError, "can't cast #{value.class.name}"
         end
+      end
 
-        if column
-          ActiveSupport::Deprecation.warn(<<~MSG)
-            Passing a column to `type_cast` is deprecated and will be removed in Rails 6.2.
-          MSG
-          type = lookup_cast_type_from_column(column)
-          value = type.serialize(value)
-        end
-
-        _type_cast(value)
+      # Quote a value to be used as a bound parameter of unknown type. For example,
+      # MySQL might perform dangerous castings when comparing a string to a number,
+      # so this method will cast numbers to string.
+      def quote_bound_value(value)
+        quote(value)
       end
 
       # If you are having to call this function, you are likely doing something
@@ -59,7 +70,7 @@ module ActiveRecord
       # Quotes a string, escaping any ' (single quote) and \ (backslash)
       # characters.
       def quote_string(s)
-        s.gsub('\\', '\&\&').gsub("'", "''") # ' (for ruby-mode)
+        s.gsub("\\", '\&\&').gsub("'", "''") # ' (for ruby-mode)
       end
 
       # Quotes the column name. Defaults to no quoting.
@@ -113,14 +124,14 @@ module ActiveRecord
       # if the value is a Time responding to usec.
       def quoted_date(value)
         if value.acts_like?(:time)
-          if ActiveRecord::Base.default_timezone == :utc
-            value = value.getutc if value.respond_to?(:getutc) && !value.utc?
+          if default_timezone == :utc
+            value = value.getutc if !value.utc?
           else
-            value = value.getlocal if value.respond_to?(:getlocal)
+            value = value.getlocal
           end
         end
 
-        result = value.to_s(:db)
+        result = value.to_fs(:db)
         if value.respond_to?(:usec) && value.usec > 0
           result << "." << sprintf("%06d", value.usec)
         else
@@ -138,7 +149,16 @@ module ActiveRecord
       end
 
       def sanitize_as_sql_comment(value) # :nodoc:
-        value.to_s.gsub(%r{ (/ (?: | \g<1>) \*) \+? \s* | \s* (\* (?: | \g<2>) /) }x, "")
+        # Sanitize a string to appear within a SQL comment
+        # For compatibility, this also surrounding "/*+", "/*", and "*/"
+        # charcacters, possibly with single surrounding space.
+        # Then follows that by replacing any internal "*/" or "/ *" with
+        # "* /" or "/ *"
+        comment = value.to_s.dup
+        comment.gsub!(%r{\A\s*/\*\+?\s?|\s?\*/\s*\Z}, "")
+        comment.gsub!("*/", "* /")
+        comment.gsub!("/*", "/ *")
+        comment
       end
 
       def column_name_matcher # :nodoc:
@@ -159,7 +179,7 @@ module ActiveRecord
         (
           (?:
             # table_name.column_name | function(one or no argument)
-            ((?:\w+\.)?\w+) | \w+\((?:|\g<2>)\)
+            ((?:\w+\.)?\w+ | \w+\((?:|\g<2>)\))
           )
           (?:(?:\s+AS)?\s+\w+)?
         )
@@ -183,7 +203,7 @@ module ActiveRecord
         (
           (?:
             # table_name.column_name | function(one or no argument)
-            ((?:\w+\.)?\w+) | \w+\((?:|\g<2>)\)
+            ((?:\w+\.)?\w+ | \w+\((?:|\g<2>)\))
           )
           (?:\s+ASC|\s+DESC)?
           (?:\s+NULLS\s+(?:FIRST|LAST))?
@@ -196,16 +216,11 @@ module ActiveRecord
 
       private
         def type_casted_binds(binds)
-          case binds.first
-          when Array
-            binds.map { |column, value| type_cast(value, column) }
-          else
-            binds.map do |value|
-              if ActiveModel::Attribute === value
-                type_cast(value.value_for_database)
-              else
-                type_cast(value)
-              end
+          binds.map do |value|
+            if ActiveModel::Attribute === value
+              type_cast(value.value_for_database)
+            else
+              type_cast(value)
             end
           end
         end
@@ -214,37 +229,20 @@ module ActiveRecord
           type_map.lookup(sql_type)
         end
 
-        def _quote(value)
-          case value
-          when String, Symbol, ActiveSupport::Multibyte::Chars
-            "'#{quote_string(value.to_s)}'"
-          when true       then quoted_true
-          when false      then quoted_false
-          when nil        then "NULL"
-          # BigDecimals need to be put in a non-normalized form and quoted.
-          when BigDecimal then value.to_s("F")
-          when Numeric, ActiveSupport::Duration then value.to_s
-          when Type::Binary::Data then quoted_binary(value)
-          when Type::Time::Value then "'#{quoted_time(value)}'"
-          when Date, Time then "'#{quoted_date(value)}'"
-          when Class      then "'#{value}'"
-          else raise TypeError, "can't quote #{value.class.name}"
-          end
-        end
-
-        def _type_cast(value)
-          case value
-          when Symbol, ActiveSupport::Multibyte::Chars, Type::Binary::Data
-            value.to_s
-          when true       then unquoted_true
-          when false      then unquoted_false
-          # BigDecimals need to be put in a non-normalized form and quoted.
-          when BigDecimal then value.to_s("F")
-          when nil, Numeric, String then value
-          when Type::Time::Value then quoted_time(value)
-          when Date, Time then quoted_date(value)
-          else raise TypeError, "can't cast #{value.class.name}"
-          end
+        def warn_quote_duration_deprecated
+          ActiveRecord.deprecator.warn(<<~MSG)
+            Using ActiveSupport::Duration as an interpolated bind parameter in a SQL
+            string template is deprecated. To avoid this warning, you should explicitly
+            convert the duration to a more specific database type. For example, if you
+            want to use a duration as an integer number of seconds:
+            ```
+            Record.where("duration = ?", 1.hour.to_i)
+            ```
+            If you want to use a duration as an ISO 8601 string:
+            ```
+            Record.where("duration = ?", 1.hour.iso8601)
+            ```
+          MSG
         end
     end
   end

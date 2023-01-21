@@ -34,7 +34,7 @@ end
 # Monkey patch subscriber to test that only one subscriber per method is added.
 class TestSubscriber
   remove_method :open_party
-  def open_party(event)
+  def open_party(event) # rubocop:disable Lint/DuplicateMethods
     events << event
   end
 end
@@ -64,7 +64,7 @@ class SubscriberTest < ActiveSupport::TestCase
     PartySubscriber.detach_from :doodle
   end
 
-  def test_attaches_subscribers_with_inherit_all_option_replaces_original_behaviour
+  def test_attaches_subscribers_with_inherit_all_option_replaces_original_behavior
     PartySubscriber.attach_to :doodle, inherit_all: true
 
     ActiveSupport::Notifications.instrument("another_open_party.doodle")
@@ -114,5 +114,17 @@ class SubscriberTest < ActiveSupport::TestCase
     ActiveSupport::Notifications.instrument("open_party.doodle")
 
     assert_equal [], TestSubscriber.events
+  end
+
+  def test_supports_publish_event
+    TestSubscriber.attach_to :doodle
+
+    original_event = ActiveSupport::Notifications::Event.new("open_party.doodle", Time.at(0), Time.at(10), "id", { foo: "bar" })
+
+    ActiveSupport::Notifications.publish_event(original_event)
+
+    assert_equal original_event, TestSubscriber.events.first
+  ensure
+    TestSubscriber.detach_from :doodle
   end
 end

@@ -4,7 +4,7 @@ module ActiveRecord
   module Validations
     class NumericalityValidator < ActiveModel::Validations::NumericalityValidator # :nodoc:
       def validate_each(record, attribute, value, precision: nil, scale: nil)
-        precision = [column_precision_for(record, attribute) || BigDecimal.double_fig, BigDecimal.double_fig].min
+        precision = [column_precision_for(record, attribute) || Float::DIG, Float::DIG].min
         scale     = column_scale_for(record, attribute)
         super(record, attribute, value, precision: precision, scale: scale)
       end
@@ -21,10 +21,11 @@ module ActiveRecord
 
     module ClassMethods
       # Validates whether the value of the specified attribute is numeric by
-      # trying to convert it to a float with Kernel.Float (if <tt>only_integer</tt>
-      # is +false+) or applying it to the regular expression <tt>/\A[\+\-]?\d+\z/</tt>
-      # (if <tt>only_integer</tt> is set to +true+). Kernel.Float precision
-      # defaults to the column's precision value or 15.
+      # trying to convert it to a float with +Kernel.Float+ (if
+      # <tt>only_integer</tt> is +false+) or applying it to the regular
+      # expression <tt>/\A[\+\-]?\d+\z/</tt> (if <tt>only_integer</tt> is set to
+      # +true+). +Kernel.Float+ precision defaults to the column's precision
+      # value or 15.
       #
       # See ActiveModel::Validations::HelperMethods.validates_numericality_of for more information.
       def validates_numericality_of(*attr_names)

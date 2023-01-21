@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "rack/utils"
-require "active_support/core_ext/uri"
 
 module ActionDispatch
   # This middleware serves static files from disk, if available.
@@ -25,22 +24,22 @@ module ActionDispatch
     end
   end
 
-  # This endpoint serves static files from disk using Rack::File.
+  # This endpoint serves static files from disk using +Rack::File+.
   #
   # URL paths are matched with static files according to expected
   # conventions: +path+, +path+.html, +path+/index.html.
   #
   # Precompressed versions of these files are checked first. Brotli (.br)
   # and gzip (.gz) files are supported. If +path+.br exists, this
-  # endpoint returns that file with a +Content-Encoding: br+ header.
+  # endpoint returns that file with a <tt>Content-Encoding: br</tt> header.
   #
-  # If no matching file is found, this endpoint responds 404 Not Found.
+  # If no matching file is found, this endpoint responds <tt>404 Not Found</tt>.
   #
   # Pass the +root+ directory to search for matching files, an optional
-  # +index: "index"+ to change the default +path+/index.html, and optional
+  # <tt>index: "index"</tt> to change the default +path+/index.html, and optional
   # additional response headers.
   class FileHandler
-    # Accept-Encoding value -> file extension
+    # +Accept-Encoding+ value -> file extension
     PRECOMPRESSED = {
       "br" => ".br",
       "gzip" => ".gz",
@@ -54,7 +53,7 @@ module ActionDispatch
       @precompressed = Array(precompressed).map(&:to_s) | %w[ identity ]
       @compressible_content_types = compressible_content_types
 
-      @file_server = ::Rack::File.new(@root, headers)
+      @file_server = ::Rack::Files.new(@root, headers)
     end
 
     def call(env)
@@ -137,11 +136,8 @@ module ActionDispatch
       end
 
       def file_readable?(path)
-        file_stat = File.stat(File.join(@root, path.b))
-      rescue SystemCallError
-        false
-      else
-        file_stat.file? && file_stat.readable?
+        file_path = File.join(@root, path.b)
+        File.file?(file_path) && File.readable?(file_path)
       end
 
       def compressible?(content_type)

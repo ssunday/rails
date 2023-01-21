@@ -32,6 +32,7 @@ class Developer < ActiveRecord::Base
 
   belongs_to :mentor
   belongs_to :strict_loading_mentor, strict_loading: true, foreign_key: :mentor_id, class_name: "Mentor"
+  belongs_to :strict_loading_off_mentor, strict_loading: false, foreign_key: :mentor_id, class_name: "Mentor"
 
   accepts_nested_attributes_for :projects
 
@@ -114,6 +115,11 @@ end
 class SubDeveloper < Developer
 end
 
+class SpecialDeveloper < ActiveRecord::Base
+  self.table_name = "developers"
+  has_many :special_contracts, foreign_key: "developer_id"
+end
+
 class SymbolIgnoredDeveloper < ActiveRecord::Base
   self.table_name = "developers"
   self.ignored_columns = [:first_name, :last_name]
@@ -154,6 +160,25 @@ end
 class DeveloperWithDefaultMentorScopeAllQueries < ActiveRecord::Base
   self.table_name = "developers"
   default_scope -> { where(mentor_id: 1) }, all_queries: true
+end
+
+class DeveloperWithDefaultNilableFirmScopeAllQueries < ActiveRecord::Base
+  self.table_name = "developers"
+  firm_id = nil # Could be something like Current.firm_id
+  default_scope -> { where(firm_id: firm_id) if firm_id }, all_queries: true
+end
+
+module MentorDefaultScopeNotAllQueries
+  extend ActiveSupport::Concern
+
+  included { default_scope { where(mentor_id: 1) } }
+end
+
+class DeveloperWithIncludedMentorDefaultScopeNotAllQueriesAndDefaultScopeFirmWithAllQueries < ActiveRecord::Base
+  include MentorDefaultScopeNotAllQueries
+  self.table_name = "developers"
+  firm_id = 10 # Could be something like Current.firm_id
+  default_scope -> { where(firm_id: firm_id) if firm_id }, all_queries: true
 end
 
 class DeveloperWithIncludes < ActiveRecord::Base

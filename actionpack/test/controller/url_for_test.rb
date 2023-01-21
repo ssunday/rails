@@ -8,7 +8,7 @@ module AbstractController
       class W
         include ActionDispatch::Routing::RouteSet.new.tap { |r|
           r.draw {
-            ActiveSupport::Deprecation.silence {
+            ActionDispatch.deprecator.silence {
               get ":controller(/:action(/:id(.:format)))"
             }
           }
@@ -268,7 +268,7 @@ module AbstractController
         w = Class.new {
           config = ActionDispatch::Routing::RouteSet::Config.new "/subdir"
           r = ActionDispatch::Routing::RouteSet.new(config)
-          r.draw { ActiveSupport::Deprecation.silence { get ":controller(/:action(/:id(.:format)))" } }
+          r.draw { ActionDispatch.deprecator.silence { get ":controller(/:action(/:id(.:format)))" } }
           include r.url_helpers
         }
         add_host!(w)
@@ -324,7 +324,7 @@ module AbstractController
           set.draw do
             get "home/sweet/home/:user", to: "home#index", as: :home
 
-            ActiveSupport::Deprecation.silence do
+            ActionDispatch.deprecator.silence do
               get ":controller/:action/:id"
             end
           end
@@ -360,6 +360,22 @@ module AbstractController
         assert_equal("/c/a?domain=foo&id=1", url)
         assert_equal({ domain: "foo" }.to_query, params[0])
         assert_equal({ id: "1" }.to_query, params[1])
+      end
+
+      def test_params_option_strong_parameters
+        request_params = ActionController::Parameters.new({ domain: "foo", id: "1", other: "BAD" })
+        url = W.new.url_for(only_path: true, controller: "c", action: "a", params: request_params.permit(:domain, :id))
+        params = extract_params(url)
+        assert_equal("/c/a?domain=foo&id=1", url)
+        assert_equal({ domain: "foo" }.to_query, params[0])
+        assert_equal({ id: "1" }.to_query, params[1])
+      end
+
+      def test_non_hash_params_option
+        url = W.new.url_for(only_path: true, controller: "c", action: "a", params: "p")
+        params = extract_params(url)
+        assert_equal("/c/a?params=p", url)
+        assert_equal({ params: "p" }.to_query, params[0])
       end
 
       def test_hash_parameter

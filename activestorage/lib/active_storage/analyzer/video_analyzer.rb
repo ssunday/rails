@@ -8,13 +8,15 @@ module ActiveStorage
   # * Duration (seconds)
   # * Angle (degrees)
   # * Display aspect ratio
+  # * Audio (true if file has an audio channel, false if not)
+  # * Video (true if file has an video channel, false if not)
   #
   # Example:
   #
   #   ActiveStorage::Analyzer::VideoAnalyzer.new(blob).metadata
-  #   # => { width: 640.0, height: 480.0, duration: 5.0, angle: 0, display_aspect_ratio: [4, 3] }
+  #   # => { width: 640.0, height: 480.0, duration: 5.0, angle: 0, display_aspect_ratio: [4, 3], audio: true, video: true }
   #
-  # When a video's angle is 90 or 270 degrees, its width and height are automatically swapped for convenience.
+  # When a video's angle is 90, -90, 270 or -270 degrees, its width and height are automatically swapped for convenience.
   #
   # This analyzer requires the {FFmpeg}[https://www.ffmpeg.org] system library, which is not provided by Rails.
   class Analyzer::VideoAnalyzer < Analyzer
@@ -23,7 +25,7 @@ module ActiveStorage
     end
 
     def metadata
-      { width: width, height: height, duration: duration, angle: angle, display_aspect_ratio: display_aspect_ratio }.compact
+      { width: width, height: height, duration: duration, angle: angle, display_aspect_ratio: display_aspect_ratio, audio: audio?, video: video? }.compact
     end
 
     private
@@ -49,7 +51,11 @@ module ActiveStorage
       end
 
       def angle
-        Integer(tags["rotate"]) if tags["rotate"]
+        if tags["rotate"]
+          Integer(tags["rotate"])
+        elsif side_data && side_data[0] && side_data[0]["rotation"]
+          Integer(side_data[0]["rotation"])
+        end
       end
 
       def display_aspect_ratio
@@ -63,9 +69,16 @@ module ActiveStorage
         end
       end
 
-
       def rotated?
-        angle == 90 || angle == 270
+        angle == 90 || angle == 270 || angle == -90 || angle == -270
+      end
+
+      def audio?
+        audio_stream.present?
+      end
+
+      def video?
+        video_stream.present?
       end
 
       def computed_height
@@ -86,13 +99,20 @@ module ActiveStorage
         @display_height_scale ||= Float(display_aspect_ratio.last) / display_aspect_ratio.first if display_aspect_ratio
       end
 
-
       def tags
         @tags ||= video_stream["tags"] || {}
       end
 
+      def side_data
+        @side_data ||= video_stream["side_data_list"] || {}
+      end
+
       def video_stream
         @video_stream ||= streams.detect { |stream| stream["codec_type"] == "video" } || {}
+      end
+
+      def audio_stream
+        @audio_stream ||= streams.detect { |stream| stream["codec_type"] == "audio" } || {}
       end
 
       def streams
@@ -108,17 +128,19 @@ module ActiveStorage
       end
 
       def probe_from(file)
-        IO.popen([ ffprobe_path,
-          "-print_format", "json",
-          "-show_streams",
-          "-show_format",
-          "-v", "error",
-          file.path
-        ]) do |output|
-          JSON.parse(output.read)
+        instrument(File.basename(ffprobe_path)) do
+          IO.popen([ ffprobe_path,
+            "-print_format", "json",
+            "-show_streams",
+            "-show_format",
+            "-v", "error",
+            file.path
+          ]) do |output|
+            JSON.parse(output.read)
+          end
         end
       rescue Errno::ENOENT
-        logger.info "Skipping video analysis because FFmpeg isn't installed"
+        logger.info "Skipping video analysis because ffprobe isn't installed"
         {}
       end
 

@@ -4,7 +4,6 @@ require "active_support/core_ext/hash/slice"
 require "active_support/core_ext/enumerable"
 require "active_support/core_ext/array/extract_options"
 require "active_support/core_ext/regexp"
-require "active_support/core_ext/symbol/starts_ends_with"
 require "action_dispatch/routing/redirection"
 require "action_dispatch/routing/endpoint"
 
@@ -13,7 +12,7 @@ module ActionDispatch
     class Mapper
       URL_OPTIONS = [:protocol, :subdomain, :domain, :host, :port]
 
-      class Constraints < Routing::Endpoint #:nodoc:
+      class Constraints < Routing::Endpoint # :nodoc:
         attr_reader :app, :constraints
 
         SERVE = ->(app, req) { app.serve req }
@@ -67,11 +66,11 @@ module ActionDispatch
           end
       end
 
-      class Mapping #:nodoc:
+      class Mapping # :nodoc:
         ANCHOR_CHARACTERS_REGEX = %r{\A(\\A|\^)|(\\Z|\\z|\$)\Z}
         OPTIONAL_FORMAT_REGEX = %r{(?:\(\.:format\)+|\.:format|/)\Z}
 
-        attr_reader :requirements, :defaults, :to, :default_controller,
+        attr_reader :path, :requirements, :defaults, :to, :default_controller,
                     :default_action, :required_defaults, :ast, :scope_options
 
         def self.build(scope, set, ast, controller, default_action, to, via, formatted, options_constraints, anchor, options)
@@ -122,31 +121,17 @@ module ActionDispatch
           @to                 = intern(to)
           @default_controller = intern(controller)
           @default_action     = intern(default_action)
-          @ast                = ast
           @anchor             = anchor
           @via                = via
           @internal           = options.delete(:internal)
           @scope_options      = scope_params[:options]
+          ast                 = Journey::Ast.new(ast, formatted)
 
-          path_params = []
-          wildcard_options = {}
-          ast.each do |node|
-            if node.symbol?
-              path_params << node.to_sym
-            elsif formatted != false && node.star?
-              # Add a constraint for wildcard route to make it non-greedy and match the
-              # optional format part of the route by default.
-              wildcard_options[node.name.to_sym] ||= /.+?/
-            elsif node.cat?
-              alter_regex_for_custom_routes(node)
-            end
-          end
+          options = ast.wildcard_options.merge!(options)
 
-          options = wildcard_options.merge!(options)
+          options = normalize_options!(options, ast.path_params, scope_params[:module])
 
-          options = normalize_options!(options, path_params, scope_params[:module])
-
-          split_options = constraints(options, path_params)
+          split_options = constraints(options, ast.path_params)
 
           constraints = scope_params[:constraints].merge Hash[split_options[:constraints] || []]
 
@@ -160,8 +145,8 @@ module ActionDispatch
             @blocks = blocks(options_constraints)
           end
 
-          requirements, conditions = split_constraints path_params, constraints
-          verify_regexp_requirements requirements.map(&:last).grep(Regexp)
+          requirements, conditions = split_constraints ast.path_params, constraints
+          verify_regexp_requirements requirements, ast.wildcard_options
 
           formats = normalize_format(formatted)
 
@@ -169,12 +154,17 @@ module ActionDispatch
           @conditions = Hash[conditions]
           @defaults = formats[:defaults].merge(@defaults).merge(normalize_defaults(options))
 
-          if path_params.include?(:action) && !@requirements.key?(:action)
+          if ast.path_params.include?(:action) && !@requirements.key?(:action)
             @defaults[:action] ||= "index"
           end
 
           @required_defaults = (split_options[:required_defaults] || []).map(&:first)
+
+          ast.requirements = @requirements
+          @path = Journey::Path::Pattern.new(ast, @requirements, JOINED_SEPARATORS, @anchor)
         end
+
+        JOINED_SEPARATORS = SEPARATORS.join # :nodoc:
 
         def make_route(name, precedence)
           Journey::Route.new(name: name, app: application, path: path, constraints: conditions,
@@ -185,12 +175,6 @@ module ActionDispatch
 
         def application
           app(@blocks)
-        end
-
-        JOINED_SEPARATORS = SEPARATORS.join # :nodoc:
-
-        def path
-          Journey::Path::Pattern.new(@ast, requirements, JOINED_SEPARATORS, @anchor)
         end
 
         def conditions
@@ -212,24 +196,6 @@ module ActionDispatch
         private :request_method
 
         private
-          # Find all the symbol nodes that are adjacent to literal nodes and alter
-          # the regexp so that Journey will partition them into custom routes.
-          def alter_regex_for_custom_routes(node)
-            if node.left.literal? && node.right.symbol?
-              symbol = node.right
-            elsif node.left.literal? && node.right.cat? && node.right.left.symbol?
-              symbol = node.right.left
-            elsif node.left.symbol? && node.right.literal?
-              symbol = node.left
-            elsif node.left.symbol? && node.right.cat? && node.right.left.literal?
-              symbol = node.left
-            end
-
-            if symbol
-              symbol.regexp = /(?:#{Regexp.union(symbol.regexp, '-')})+/
-            end
-          end
-
           def intern(object)
             object.is_a?(String) ? -object : object
           end
@@ -280,14 +246,18 @@ module ActionDispatch
             end
           end
 
-          def verify_regexp_requirements(requirements)
-            requirements.each do |requirement|
-              if ANCHOR_CHARACTERS_REGEX.match?(requirement.source)
+          def verify_regexp_requirements(requirements, wildcard_options)
+            requirements.each do |requirement, regex|
+              next unless regex.is_a? Regexp
+
+              if ANCHOR_CHARACTERS_REGEX.match?(regex.source)
                 raise ArgumentError, "Regexp anchor characters are not allowed in routing requirements: #{requirement.inspect}"
               end
 
-              if requirement.multiline?
-                raise ArgumentError, "Regexp multiline option is not allowed in routing requirements: #{requirement.inspect}"
+              if regex.multiline?
+                next if wildcard_options.key?(requirement)
+
+                raise ArgumentError, "Regexp multiline option is not allowed in routing requirements: #{regex.inspect}"
               end
             end
           end
@@ -420,10 +390,10 @@ module ActionDispatch
         #
         # If you want to expose your action to both GET and POST, use:
         #
-        #   # sets :controller, :action and :id in params
+        #   # sets :controller, :action, and :id in params
         #   match ':controller/:action/:id', via: [:get, :post]
         #
-        # Note that +:controller+, +:action+ and +:id+ are interpreted as URL
+        # Note that +:controller+, +:action+, and +:id+ are interpreted as URL
         # query parameters and thus available through +params+ in an action.
         #
         # If you want to expose your action to GET, use +get+ in the router:
@@ -639,7 +609,7 @@ module ActionDispatch
           target_as       = name_for_action(options[:as], path)
           options[:via] ||= :all
 
-          match(path, options.merge(to: app, anchor: false, format: false))
+          match(path, { to: app, anchor: false, format: false }.merge(options))
 
           define_generate_prefix(app, target_as) if rails_app
           self
@@ -682,7 +652,7 @@ module ActionDispatch
 
             script_namer = ->(options) do
               prefix_options = options.slice(*_route.segment_keys)
-              prefix_options[:relative_url_root] = ""
+              prefix_options[:script_name] = "" if options[:original_script_name]
 
               if options[:_recall]
                 prefix_options.reverse_merge!(options[:_recall].slice(*_route.segment_keys))
@@ -936,7 +906,7 @@ module ActionDispatch
         #
         # === Options
         #
-        # The +:path+, +:as+, +:module+, +:shallow_path+ and +:shallow_prefix+
+        # The +:path+, +:as+, +:module+, +:shallow_path+, and +:shallow_prefix+
         # options all default to the name of the namespace.
         #
         # For options, see <tt>Base#match</tt>. For +:shallow_path+ option, see
@@ -956,7 +926,7 @@ module ActionDispatch
         #   namespace :admin, as: "sekret" do
         #     resources :posts
         #   end
-        def namespace(path, options = {})
+        def namespace(path, options = {}, &block)
           path = path.to_s
 
           defaults = {
@@ -967,7 +937,7 @@ module ActionDispatch
           }
 
           path_scope(options.delete(:path) { path }) do
-            scope(defaults.merge!(options)) { yield }
+            scope(defaults.merge!(options), &block)
           end
         end
 
@@ -1026,8 +996,8 @@ module ActionDispatch
         #    constraints(Iphone) do
         #      resources :iphones
         #    end
-        def constraints(constraints = {})
-          scope(constraints: constraints) { yield }
+        def constraints(constraints = {}, &block)
+          scope(constraints: constraints, &block)
         end
 
         # Allows you to set default parameters for a route, such as this:
@@ -1112,7 +1082,7 @@ module ActionDispatch
 
       # Resource routing allows you to quickly declare all of the common routes
       # for a given resourceful controller. Instead of declaring separate routes
-      # for your +index+, +show+, +new+, +edit+, +create+, +update+ and +destroy+
+      # for your +index+, +show+, +new+, +edit+, +create+, +update+, and +destroy+
       # actions, a resourceful route declares them in a single line of code:
       #
       #  resources :photos
@@ -1156,7 +1126,7 @@ module ActionDispatch
         RESOURCE_OPTIONS  = [:as, :controller, :path, :only, :except, :param, :concerns]
         CANONICAL_ACTIONS = %w(index create new show update destroy)
 
-        class Resource #:nodoc:
+        class Resource # :nodoc:
           attr_reader :controller, :path, :param
 
           def initialize(entities, api_only, shallow, options = {})
@@ -1251,7 +1221,7 @@ module ActionDispatch
           def singleton?; false; end
         end
 
-        class SingletonResource < Resource #:nodoc:
+        class SingletonResource < Resource # :nodoc:
           def initialize(entities, api_only, shallow, options)
             super
             @as         = nil
@@ -1306,6 +1276,16 @@ module ActionDispatch
         #   PATCH/PUT /profile
         #   DELETE    /profile
         #   POST      /profile
+        #
+        # If you want instances of a model to work with this resource via
+        # record identification (e.g. in +form_with+ or +redirect_to+), you
+        # will need to call resolve[rdoc-ref:CustomUrls#resolve]:
+        #
+        #   resource :profile
+        #   resolve('Profile') { [:profile] }
+        #
+        #   # Enables this to work with singular routes:
+        #   form_with(model: @profile) {}
         #
         # === Options
         # Takes same options as resources[rdoc-ref:#resources]
@@ -1517,15 +1497,13 @@ module ActionDispatch
         # with GET, and route to the search action of +PhotosController+. It will also
         # create the <tt>search_photos_url</tt> and <tt>search_photos_path</tt>
         # route helpers.
-        def collection
+        def collection(&block)
           unless resource_scope?
             raise ArgumentError, "can't use collection outside resource(s) scope"
           end
 
           with_scope_level(:collection) do
-            path_scope(parent_resource.collection_scope) do
-              yield
-            end
+            path_scope(parent_resource.collection_scope, &block)
           end
         end
 
@@ -1540,7 +1518,7 @@ module ActionDispatch
         # This will recognize <tt>/photos/1/preview</tt> with GET, and route to the
         # preview action of +PhotosController+. It will also create the
         # <tt>preview_photo_url</tt> and <tt>preview_photo_path</tt> helpers.
-        def member
+        def member(&block)
           unless resource_scope?
             raise ArgumentError, "can't use member outside resource(s) scope"
           end
@@ -1548,27 +1526,25 @@ module ActionDispatch
           with_scope_level(:member) do
             if shallow?
               shallow_scope {
-                path_scope(parent_resource.member_scope) { yield }
+                path_scope(parent_resource.member_scope, &block)
               }
             else
-              path_scope(parent_resource.member_scope) { yield }
+              path_scope(parent_resource.member_scope, &block)
             end
           end
         end
 
-        def new
+        def new(&block)
           unless resource_scope?
             raise ArgumentError, "can't use new outside resource(s) scope"
           end
 
           with_scope_level(:new) do
-            path_scope(parent_resource.new_scope(action_path(:new))) do
-              yield
-            end
+            path_scope(parent_resource.new_scope(action_path(:new)), &block)
           end
         end
 
-        def nested
+        def nested(&block)
           unless resource_scope?
             raise ArgumentError, "can't use nested outside resource(s) scope"
           end
@@ -1577,12 +1553,12 @@ module ActionDispatch
             if shallow? && shallow_nesting_depth >= 1
               shallow_scope do
                 path_scope(parent_resource.nested_scope) do
-                  scope(nested_options) { yield }
+                  scope(nested_options, &block)
                 end
               end
             else
               path_scope(parent_resource.nested_scope) do
-                scope(nested_options) { yield }
+                scope(nested_options, &block)
               end
             end
           end
@@ -1608,6 +1584,29 @@ module ActionDispatch
           !parent_resource.singleton? && @scope[:shallow]
         end
 
+        # Loads another routes file with the given +name+ located inside the
+        # +config/routes+ directory. In that file, you can use the normal
+        # routing DSL, but <i>do not</i> surround it with a
+        # +Rails.application.routes.draw+ block.
+        #
+        #   # config/routes.rb
+        #   Rails.application.routes.draw do
+        #     draw :admin                 # Loads `config/routes/admin.rb`
+        #     draw "third_party/some_gem" # Loads `config/routes/third_party/some_gem.rb`
+        #   end
+        #
+        #   # config/routes/admin.rb
+        #   namespace :admin do
+        #     resources :accounts
+        #   end
+        #
+        #   # config/routes/third_party/some_gem.rb
+        #   mount SomeGem::Engine, at: "/some_gem"
+        #
+        # <b>CAUTION:</b> Use this feature with care. Having multiple routes
+        # files can negatively impact discoverability and readability. For most
+        # applications — even those with a few hundred routes — it's easier for
+        # developers to have a single routes file.
         def draw(name)
           path = @draw_paths.find do |_path|
             File.exist? "#{_path}/#{name}.rb"
@@ -1768,10 +1767,10 @@ module ActionDispatch
             @scope = @scope.parent
           end
 
-          def resource_scope(resource)
+          def resource_scope(resource, &block)
             @scope = @scope.new(scope_level_resource: resource)
 
-            controller(resource.resource_scope) { yield }
+            controller(resource.resource_scope, &block)
           ensure
             @scope = @scope.parent
           end
@@ -1889,7 +1888,7 @@ module ActionDispatch
           end
 
           def map_match(paths, options)
-            if options[:on] && !VALID_ON_OPTIONS.include?(options[:on])
+            if (on = options[:on]) && !VALID_ON_OPTIONS.include?(on)
               raise ArgumentError, "Unknown scope #{on.inspect} given to :on"
             end
 
@@ -2300,7 +2299,7 @@ module ActionDispatch
         NULL = Scope.new(nil, nil)
       end
 
-      def initialize(set) #:nodoc:
+      def initialize(set) # :nodoc:
         @set = set
         @draw_paths = set.draw_paths
         @scope = Scope.new(path_names: @set.resources_path_names)

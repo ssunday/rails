@@ -4,7 +4,8 @@ require_relative "abstract_unit"
 require "active_support/current_attributes/test_helper"
 
 class CurrentAttributesTest < ActiveSupport::TestCase
-  # Automatically included in Rails apps via railtie but that dodn't run here.
+  # CurrentAttributes is automatically reset in Rails app via executor hooks set in railtie
+  # But not in Active Support's own test suite.
   include ActiveSupport::CurrentAttributes::TestHelper
 
   Person = Struct.new(:id, :name, :time_zone)
@@ -16,9 +17,10 @@ class CurrentAttributesTest < ActiveSupport::TestCase
     before_reset { Session.previous = person&.id }
 
     resets do
-      Time.zone = "UTC"
       Session.current = nil
     end
+
+    resets :clear_time_zone
 
     def account=(account)
       super
@@ -31,6 +33,19 @@ class CurrentAttributesTest < ActiveSupport::TestCase
       Session.current = person&.id
     end
 
+    def set_world_and_account(world:, account:)
+      self.world = world
+      self.account = account
+    end
+
+    def get_world_and_account(hash)
+      hash[:world] = world
+      hash[:account] = account
+      hash
+    end
+
+    def respond_to_test; end
+
     def request
       "#{super} something"
     end
@@ -38,6 +53,11 @@ class CurrentAttributesTest < ActiveSupport::TestCase
     def intro
       "#{person.name}, in #{time_zone}"
     end
+
+    private
+      def clear_time_zone
+        Time.zone = "UTC"
+      end
   end
 
   class Session < ActiveSupport::CurrentAttributes
@@ -126,6 +146,18 @@ class CurrentAttributesTest < ActiveSupport::TestCase
     assert_equal "account/1", Current.account
   end
 
+  test "using keyword arguments" do
+    Current.set_world_and_account(world: "world/1", account: "account/1")
+
+    assert_equal "world/1", Current.world
+    assert_equal "account/1", Current.account
+
+    hash = {}
+    assert_same hash, Current.get_world_and_account(hash)
+    assert_equal "world/1", hash[:world]
+    assert_equal "account/1", hash[:account]
+  end
+
   setup { @testing_teardown = false }
   teardown { assert_equal 42, Session.current if @testing_teardown }
 
@@ -144,5 +176,43 @@ class CurrentAttributesTest < ActiveSupport::TestCase
     Current.person = Person.new(42, "David", "Central Time (US & Canada)")
     assert_equal "David, in Central Time (US & Canada)", Current.intro
     assert_equal "David, in Central Time (US & Canada)", Current.instance.intro
+  end
+
+  test "respond_to? for methods that have not been called" do
+    assert_equal true, Current.respond_to?("respond_to_test")
+  end
+
+  test "CurrentAttributes use fiber-local variables" do
+    previous_level = ActiveSupport::IsolatedExecutionState.isolation_level
+    ActiveSupport::IsolatedExecutionState.isolation_level = :fiber
+
+    Session.current = 42
+    enumerator = Enumerator.new do |yielder|
+      yielder.yield Session.current
+    end
+    assert_nil enumerator.next
+  ensure
+    ActiveSupport::IsolatedExecutionState.isolation_level = previous_level
+  end
+
+  test "CurrentAttributes can use thread-local variables" do
+    previous_level = ActiveSupport::IsolatedExecutionState.isolation_level
+    ActiveSupport::IsolatedExecutionState.isolation_level = :thread
+
+    Session.current = 42
+    enumerator = Enumerator.new do |yielder|
+      yielder.yield Session.current
+    end
+    assert_equal 42, enumerator.next
+  ensure
+    ActiveSupport::IsolatedExecutionState.isolation_level = previous_level
+  end
+
+  test "CurrentAttributes restricted attribute names" do
+    assert_raises ArgumentError, match: /Restricted attribute names: reset, set/ do
+      class InvalidAttributeNames < ActiveSupport::CurrentAttributes
+        attribute :reset, :foo, :set
+      end
+    end
   end
 end

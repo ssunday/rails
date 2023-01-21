@@ -122,13 +122,33 @@ module ActiveRecord
     # :singleton-method: immutable_strings_by_default=
     # :call-seq: immutable_strings_by_default=(bool)
     #
-    # Determines whether columns should infer their type as `:string` or
-    # `:immutable_string`. This setting does not affect the behavior of
-    # `attribute :foo, :string`. Defaults to false.
+    # Determines whether columns should infer their type as +:string+ or
+    # +:immutable_string+. This setting does not affect the behavior of
+    # <tt>attribute :foo, :string</tt>. Defaults to false.
+
+    ##
+    # :singleton-method: inheritance_column
+    # :call-seq: inheritance_column
+    #
+    # The name of the table column which stores the class name on single-table
+    # inheritance situations.
+    #
+    # The default inheritance column name is +type+, which means it's a
+    # reserved word inside Active Record. To be able to use single-table
+    # inheritance with another column name, or to use the column +type+ in
+    # your own model for something else, you can set +inheritance_column+:
+    #
+    #     self.inheritance_column = 'zoink'
+
+    ##
+    # :singleton-method: inheritance_column=
+    # :call-seq: inheritance_column=(column)
+    #
+    # Defines the name of the table column which will store the class name on single-table
+    # inheritance situations.
 
     included do
-      mattr_accessor :primary_key_prefix_type, instance_writer: false
-
+      class_attribute :primary_key_prefix_type, instance_writer: false
       class_attribute :table_name_prefix, instance_writer: false, default: ""
       class_attribute :table_name_suffix, instance_writer: false, default: ""
       class_attribute :schema_migrations_table_name, instance_accessor: false, default: "schema_migrations"
@@ -137,8 +157,15 @@ module ActiveRecord
       class_attribute :implicit_order_column, instance_accessor: false
       class_attribute :immutable_strings_by_default, instance_accessor: false
 
+      class_attribute :inheritance_column, instance_accessor: false, default: "type"
+      singleton_class.class_eval do
+        alias_method :_inheritance_column=, :inheritance_column=
+        private :_inheritance_column=
+        alias_method :inheritance_column=, :real_inheritance_column=
+      end
+
       self.protected_environments = ["production"]
-      self.inheritance_column = "type"
+
       self.ignored_columns = [].freeze
 
       delegate :type_for_attribute, :column_for_attribute, to: :class
@@ -153,8 +180,9 @@ module ActiveRecord
     #   artists, records => artists_records
     #   records, artists => artists_records
     #   music_artists, music_records => music_artists_records
+    #   music.artists, music.records => music.artists_records
     def self.derive_join_table_name(first_table, second_table) # :nodoc:
-      [first_table.to_s, second_table.to_s].sort.join("\0").gsub(/^(.*_)(.+)\0\1(.+)/, '\1\2_\3').tr("\0", "_")
+      [first_table.to_s, second_table.to_s].sort.join("\0").gsub(/^(.*[_.])(.+)\0\1(.+)/, '\1\2_\3').tr("\0", "_")
     end
 
     module ClassMethods
@@ -197,6 +225,21 @@ module ActiveRecord
       # the table name guess for an Invoice class becomes "myapp_invoices".
       # Invoice::Lineitem becomes "myapp_invoice_lineitems".
       #
+      # Active Model Naming's +model_name+ is the base name used to guess the
+      # table name. In case a custom Active Model Name is defined, it will be
+      # used for the table name as well:
+      #
+      #   class PostRecord < ActiveRecord::Base
+      #     class << self
+      #       def model_name
+      #         ActiveModel::Name.new(self, nil, "Post")
+      #       end
+      #     end
+      #   end
+      #
+      #   PostRecord.table_name
+      #   # => "posts"
+      #
       # You can also set your own table name explicitly:
       #
       #   class Mouse < ActiveRecord::Base
@@ -233,7 +276,7 @@ module ActiveRecord
       end
 
       # Computes the table name, (re)sets it internally, and returns it.
-      def reset_table_name #:nodoc:
+      def reset_table_name # :nodoc:
         self.table_name = if abstract_class?
           superclass == Base ? nil : superclass.table_name
         elsif superclass.abstract_class?
@@ -243,11 +286,11 @@ module ActiveRecord
         end
       end
 
-      def full_table_name_prefix #:nodoc:
+      def full_table_name_prefix # :nodoc:
         (module_parents.detect { |p| p.respond_to?(:table_name_prefix) } || self).table_name_prefix
       end
 
-      def full_table_name_suffix #:nodoc:
+      def full_table_name_suffix # :nodoc:
         (module_parents.detect { |p| p.respond_to?(:table_name_suffix) } || self).table_name_suffix
       end
 
@@ -266,33 +309,14 @@ module ActiveRecord
         @protected_environments = environments.map(&:to_s)
       end
 
-      # Defines the name of the table column which will store the class name on single-table
-      # inheritance situations.
-      #
-      # The default inheritance column name is +type+, which means it's a
-      # reserved word inside Active Record. To be able to use single-table
-      # inheritance with another column name, or to use the column +type+ in
-      # your own model for something else, you can set +inheritance_column+:
-      #
-      #     self.inheritance_column = 'zoink'
-      def inheritance_column
-        (@inheritance_column ||= nil) || superclass.inheritance_column
-      end
-
-      # Sets the value of inheritance_column
-      def inheritance_column=(value)
-        @inheritance_column = value.to_s
-        @explicit_inheritance_column = true
+      def real_inheritance_column=(value) # :nodoc:
+        self._inheritance_column = value.to_s
       end
 
       # The list of columns names the model should ignore. Ignored columns won't have attribute
       # accessors defined, and won't be referenced in SQL queries.
       def ignored_columns
-        if defined?(@ignored_columns)
-          @ignored_columns
-        else
-          superclass.ignored_columns
-        end
+        @ignored_columns || superclass.ignored_columns
       end
 
       # Sets the columns names the model should ignore. Ignored columns won't have attribute
@@ -313,10 +337,10 @@ module ActiveRecord
       #     #   name       :string, limit: 255
       #     #   category   :string, limit: 255
       #
-      #     self.ignored_columns = [:category]
+      #     self.ignored_columns += [:category]
       #   end
       #
-      # The schema still contains `category`, but now the model omits it, so any meta-driven code or
+      # The schema still contains "category", but now the model omits it, so any meta-driven code or
       # schema caching will not attempt to use the column:
       #
       #   Project.columns_hash["category"] => nil
@@ -339,7 +363,7 @@ module ActiveRecord
         end
       end
 
-      def reset_sequence_name #:nodoc:
+      def reset_sequence_name # :nodoc:
         @explicit_sequence_name = false
         @sequence_name          = connection.default_sequence_name(table_name, primary_key)
       end
@@ -486,9 +510,9 @@ module ActiveRecord
       #
       # The most common usage pattern for this method is probably in a migration,
       # when just after creating a table you want to populate it with some default
-      # values, eg:
+      # values, e.g.:
       #
-      #  class CreateJobLevels < ActiveRecord::Migration[6.0]
+      #  class CreateJobLevels < ActiveRecord::Migration[7.1]
       #    def up
       #      create_table :job_levels do |t|
       #        t.integer :id
@@ -521,10 +545,35 @@ module ActiveRecord
           @load_schema_monitor = Monitor.new
         end
 
+        def reload_schema_from_cache(recursive = true)
+          @arel_table = nil
+          @column_names = nil
+          @symbol_column_to_string_name_hash = nil
+          @attribute_types = nil
+          @content_columns = nil
+          @default_attributes = nil
+          @column_defaults = nil
+          @attributes_builder = nil
+          @columns = nil
+          @columns_hash = nil
+          @schema_loaded = false
+          @attribute_names = nil
+          @yaml_encoder = nil
+          if recursive
+            subclasses.each do |descendant|
+              descendant.send(:reload_schema_from_cache)
+            end
+          end
+        end
+
       private
         def inherited(child_class)
           super
           child_class.initialize_load_schema_monitor
+          child_class.reload_schema_from_cache(false)
+          child_class.class_eval do
+            @ignored_columns = nil
+          end
         end
 
         def schema_loaded?
@@ -534,7 +583,7 @@ module ActiveRecord
         def load_schema
           return if schema_loaded?
           @load_schema_monitor.synchronize do
-            return if defined?(@columns_hash) && @columns_hash
+            return if @columns_hash
 
             load_schema!
 
@@ -556,7 +605,6 @@ module ActiveRecord
           @columns_hash.each do |name, column|
             type = connection.lookup_cast_type_from_column(column)
             type = _convert_type_from_options(type)
-            warn_if_deprecated_type(column)
             define_attribute(
               name,
               type,
@@ -564,31 +612,13 @@ module ActiveRecord
               user_provided_default: false
             )
           end
-        end
 
-        def reload_schema_from_cache
-          @arel_table = nil
-          @column_names = nil
-          @symbol_column_to_string_name_hash = nil
-          @attribute_types = nil
-          @content_columns = nil
-          @default_attributes = nil
-          @column_defaults = nil
-          @inheritance_column = nil unless defined?(@explicit_inheritance_column) && @explicit_inheritance_column
-          @attributes_builder = nil
-          @columns = nil
-          @columns_hash = nil
-          @schema_loaded = false
-          @attribute_names = nil
-          @yaml_encoder = nil
-          direct_descendants.each do |descendant|
-            descendant.send(:reload_schema_from_cache)
-          end
+          super
         end
 
         # Guesses the table name, but does not decorate it with prefix and suffix information.
-        def undecorated_table_name(class_name = base_class.name)
-          table_name = class_name.to_s.demodulize.underscore
+        def undecorated_table_name(model_name)
+          table_name = model_name.to_s.demodulize.underscore
           pluralize_table_names ? table_name.pluralize : table_name
         end
 
@@ -602,9 +632,9 @@ module ActiveRecord
               contained += "_"
             end
 
-            "#{full_table_name_prefix}#{contained}#{undecorated_table_name(name)}#{full_table_name_suffix}"
+            "#{full_table_name_prefix}#{contained}#{undecorated_table_name(model_name)}#{full_table_name_suffix}"
           else
-            # STI subclasses always use their superclass' table.
+            # STI subclasses always use their superclass's table.
             base_class.table_name
           end
         end
@@ -614,32 +644,6 @@ module ActiveRecord
             type.to_immutable_string
           else
             type
-          end
-        end
-
-        def warn_if_deprecated_type(column)
-          return if attributes_to_define_after_schema_loads.key?(column.name)
-          return unless column.respond_to?(:oid)
-
-          if column.array?
-            array_arguments = ", array: true"
-          else
-            array_arguments = ""
-          end
-
-          if column.sql_type.start_with?("interval")
-            precision_arguments = column.precision.presence && ", precision: #{column.precision}"
-            ActiveSupport::Deprecation.warn(<<~WARNING)
-              The behavior of the `:interval` type will be changing in Rails 6.2
-              to return an `ActiveSupport::Duration` object. If you'd like to keep
-              the old behavior, you can add this line to #{self.name} model:
-
-                attribute :#{column.name}, :string#{precision_arguments}#{array_arguments}
-
-              If you'd like the new behavior today, you can add this line:
-
-                attribute :#{column.name}, :interval#{precision_arguments}#{array_arguments}
-            WARNING
           end
         end
     end

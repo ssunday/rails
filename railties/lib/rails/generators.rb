@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-activesupport_path = File.expand_path("../../../activesupport/lib", __dir__)
-$:.unshift(activesupport_path) if File.directory?(activesupport_path) && !$:.include?(activesupport_path)
-
 require "thor/group"
 require "rails/command"
 
@@ -33,13 +30,10 @@ module Rails
       rails: {
         actions: "-a",
         orm: "-o",
-        javascripts: "-j",
-        javascript_engine: "-je",
+        javascripts: ["-j", "--js"],
         resource_controller: "-c",
         scaffold_controller: "-c",
         stylesheets: "-y",
-        stylesheet_engine: "-se",
-        scaffold_stylesheet: "-ss",
         template_engine: "-e",
         test_framework: "-t"
       },
@@ -60,9 +54,6 @@ module Rails
         resource_controller: :controller,
         resource_route: true,
         scaffold_controller: :scaffold_controller,
-        stylesheets: true,
-        stylesheet_engine: :css,
-        scaffold_stylesheet: true,
         system_tests: nil,
         test_framework: nil,
         template_engine: :erb
@@ -70,7 +61,7 @@ module Rails
     }
 
     class << self
-      def configure!(config) #:nodoc:
+      def configure!(config) # :nodoc:
         api_only! if config.api_only
         no_color! unless config.colorize_logging
         aliases.deep_merge! config.aliases
@@ -82,15 +73,15 @@ module Rails
         after_generate_callbacks.replace config.after_generate_callbacks
       end
 
-      def templates_path #:nodoc:
+      def templates_path # :nodoc:
         @templates_path ||= []
       end
 
-      def aliases #:nodoc:
+      def aliases # :nodoc:
         @aliases ||= DEFAULT_ALIASES.dup
       end
 
-      def options #:nodoc:
+      def options # :nodoc:
         @options ||= DEFAULT_OPTIONS.dup
       end
 
@@ -135,14 +126,12 @@ module Rails
       # Returns an array of generator namespaces that are hidden.
       # Generator namespaces may be hidden for a variety of reasons.
       # Some are aliased such as "rails:migration" and can be
-      # invoked with the shorter "migration", others are private to other generators
-      # such as "css:scaffold".
+      # invoked with the shorter "migration".
       def hidden_namespaces
         @hidden_namespaces ||= begin
           orm      = options[:rails][:orm]
           test     = options[:rails][:test_framework]
           template = options[:rails][:template_engine]
-          css      = options[:rails][:stylesheet_engine]
 
           [
             "rails",
@@ -161,10 +150,6 @@ module Rails
             "#{template}:controller",
             "#{template}:scaffold",
             "#{template}:mailer",
-            "#{css}:scaffold",
-            "#{css}:assets",
-            "css:assets",
-            "css:scaffold",
             "action_text:install",
             "action_mailbox:install"
           ]
@@ -241,7 +226,7 @@ module Rails
       #
       # Notice that "rails:generators:webrat" could be loaded as well, what
       # Rails looks for is the first and last parts of the namespace.
-      def find_by_namespace(name, base = nil, context = nil) #:nodoc:
+      def find_by_namespace(name, base = nil, context = nil) # :nodoc:
         lookups = []
         lookups << "#{base}:#{name}"    if base
         lookups << "#{name}:#{context}" if context
@@ -265,8 +250,8 @@ module Rails
         invoke_fallbacks_for(name, base) || invoke_fallbacks_for(context, name)
       end
 
-      # Receives a namespace, arguments and the behavior to invoke the generator.
-      # It's used as the default entry point for generate, destroy and update
+      # Receives a namespace, arguments, and the behavior to invoke the generator.
+      # It's used as the default entry point for generate, destroy, and update
       # commands.
       def invoke(namespace, args = ARGV, config = {})
         names = namespace.to_s.split(":")
@@ -275,12 +260,17 @@ module Rails
           klass.start(args, config)
           run_after_generate_callback if config[:behavior] == :invoke
         else
-          options     = sorted_groups.flat_map(&:last)
-          suggestion  = Rails::Command::Spellchecker.suggest(namespace.to_s, from: options)
-          suggestion_msg = "Maybe you meant #{suggestion.inspect}?" if suggestion
+          options = sorted_groups.flat_map(&:last)
+          error   = Command::Base::CorrectableError.new("Could not find generator '#{namespace}'.", namespace, options)
+
+          if error.respond_to?(:detailed_message)
+            formatted_message = error.detailed_message
+          else
+            formatted_message = error.message
+          end
 
           puts <<~MSG
-            Could not find generator '#{namespace}'. #{suggestion_msg}
+            #{formatted_message}
             Run `bin/rails generate --help` for more options.
           MSG
         end

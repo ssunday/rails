@@ -3,7 +3,7 @@
 Ruby on Rails 2.2 Release Notes
 ===============================
 
-Rails 2.2 delivers a number of new and improved features. This list covers the major upgrades, but doesn't include every little bug fix and change. If you want to see everything, check out the [list of commits](https://github.com/rails/rails/commits/2-2-stable) in the main Rails repository on GitHub.
+Rails 2.2 delivers several new and improved features. This list covers the major upgrades but doesn't include every little bug fix and change. If you want to see everything, check out the [list of commits](https://github.com/rails/rails/commits/2-2-stable) in the main Rails repository on GitHub.
 
 Along with Rails, 2.2 marks the launch of the [Ruby on Rails Guides](https://guides.rubyonrails.org/), the first results of the ongoing [Rails Guides hackfest](http://hackfest.rubyonrails.org/guide). This site will deliver high-quality documentation of the major features of Rails.
 
@@ -55,7 +55,7 @@ If you want to generate these guides locally, inside your application:
 $ rake doc:guides
 ```
 
-This will put the guides inside `Rails.root/doc/guides` and you may start surfing straight away by opening `Rails.root/doc/guides/index.html` in your favourite browser.
+This will put the guides inside `Rails.root/doc/guides` and you may start surfing straight away by opening `Rails.root/doc/guides/index.html` in your favorite browser.
 
 * Major contributions from [Xavier Noria](http://advogato.org/person/fxn/diary.html) and [Hongli Lai](http://izumi.plan99.net/blog/).
 * More information:
@@ -65,7 +65,7 @@ This will put the guides inside `Rails.root/doc/guides` and you may start surfin
 Better integration with HTTP : Out of the box ETag support
 ----------------------------------------------------------
 
-Supporting the etag and last modified timestamp in HTTP headers means that Rails can now send back an empty response if it gets a request for a resource that hasn't been modified lately. This allows you to check whether a response needs to be sent at all.
+Supporting the ETag and last modified timestamp in HTTP headers means that Rails can now send back an empty response if it gets a request for a resource that hasn't been modified lately. This allows you to check whether a response needs to be sent at all.
 
 ```ruby
 class ArticlesController < ApplicationController
@@ -77,7 +77,7 @@ class ArticlesController < ApplicationController
     # to the stale? call is set on the response).
     #
     # If the request headers match, then the request is fresh and the respond_to block is
-    # not triggered. Instead the default render will occur, which will check the last-modified
+    # not triggered. Instead, the default render will occur, which will check the last-modified
     # and etag headers and conclude that it only needs to send a "304 Not Modified" instead
     # of rendering the template.
     if stale?(:last_modified => @article.published_at.utc, :etag => @article)
@@ -267,7 +267,7 @@ map.resources :products, :except => :destroy
 * Benchmarking numbers are now reported in milliseconds rather than tiny fractions of seconds
 * Rails now supports HTTP-only cookies (and uses them for sessions), which help mitigate some cross-site scripting risks in newer browsers.
 * `redirect_to` now fully supports URI schemes (so, for example, you can redirect to a svn`ssh: URI).
-* `render` now supports a `:js` option to render plain vanilla JavaScript with the right mime type.
+* `render` now supports a `:js` option to render plain vanilla JavaScript with the right MIME type.
 * Request forgery protection has been tightened up to apply to HTML-formatted content requests only.
 * Polymorphic URLs behave more sensibly if a passed parameter is nil. For example, calling `polymorphic_path([@project, @date, @area])` with a nil date will give you `project_area_path`.
 

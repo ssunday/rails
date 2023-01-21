@@ -1,10 +1,12 @@
 # frozen_string_literal: true
 
+require "bigdecimal"
 require "helper"
 require "active_job/arguments"
 require "models/person"
 require "active_support/core_ext/hash/indifferent_access"
 require "jobs/kwargs_job"
+require "jobs/arguments_round_trip_job"
 require "support/stubs/strong_parameters"
 
 class ArgumentSerializationTest < ActiveSupport::TestCase
@@ -19,7 +21,7 @@ class ArgumentSerializationTest < ActiveSupport::TestCase
   end
 
   [ nil, 1, 1.0, 1_000_000_000_000_000_000_000,
-    "a", true, false, BigDecimal(5),
+    "a", true, false,
     :a,
     1.day,
     Date.new(2001, 2, 3),
@@ -30,14 +32,49 @@ class ArgumentSerializationTest < ActiveSupport::TestCase
     { "a" => 1 },
     ModuleArgument,
     ModuleArgument::ClassArgument,
-    ClassArgument
+    ClassArgument,
+    1..,
+    1...,
+    1..5,
+    1...5,
+    "a".."z",
+    "A".."Z",
+    Date.new(2001, 2, 3)..,
+    10.days.ago..Date.today,
+    Time.new(2002, 10, 31, 2, 2, 2.123456789r, "+02:00")..,
+    10.hours.ago..Time.current,
+    DateTime.new(2001, 2, 3, 4, 5, 6.123456r, "+03:00")..,
+    (DateTime.current - 4.weeks)..DateTime.current,
+    ActiveSupport::TimeWithZone.new(Time.utc(1999, 12, 31, 23, 59, "59.123456789".to_r), ActiveSupport::TimeZone["UTC"])..,
   ].each do |arg|
     test "serializes #{arg.class} - #{arg.inspect} verbatim" do
       assert_arguments_unchanged arg
     end
   end
 
-  [ Object.new, Person.find("5").to_gid ].each do |arg|
+  test "dangerously treats BigDecimal arguments as primitives not requiring serialization by default" do
+    assert_deprecated(<<~MSG.chomp, ActiveJob.deprecator) do
+      Primitive serialization of BigDecimal job arguments is deprecated as it may serialize via .to_s using certain queue adapters.
+      Enable config.active_job.use_big_decimal_serializer to use BigDecimalSerializer instead, which will be mandatory in Rails 7.2.
+
+      Note that if you application has multiple replicas, you should only enable this setting after successfully deploying your app to Rails 7.1 first.
+      This will ensure that during your deployment all replicas are capable of deserializing arguments serialized with BigDecimalSerializer.
+    MSG
+      assert_equal(
+        BigDecimal(5),
+        *ActiveJob::Arguments.deserialize(ActiveJob::Arguments.serialize([BigDecimal(5)])),
+      )
+    end
+  end
+
+  test "safely serializes BigDecimal arguments if configured to use_big_decimal_serializer" do
+    # BigDecimal(5) example should be moved back up into array above in Rails 7.2
+    with_big_decimal_serializer do
+      assert_arguments_unchanged BigDecimal(5)
+    end
+  end
+
+  [ Object.new, Person.find("5").to_gid, Class.new ].each do |arg|
     test "does not serialize #{arg.class}" do
       assert_raises ActiveJob::SerializationError do
         ActiveJob::Arguments.serialize [ arg ]
@@ -195,6 +232,16 @@ class ArgumentSerializationTest < ActiveSupport::TestCase
     end
 
     def perform_round_trip(args)
-      ActiveJob::Arguments.deserialize(ActiveJob::Arguments.serialize(args))
+      ArgumentsRoundTripJob.perform_later(*args) # Actually performed inline
+
+      JobBuffer.last_value
+    end
+
+    def with_big_decimal_serializer(temporary = true)
+      original = ActiveJob.use_big_decimal_serializer
+      ActiveJob.use_big_decimal_serializer = temporary
+      yield
+    ensure
+      ActiveJob.use_big_decimal_serializer = original
     end
 end

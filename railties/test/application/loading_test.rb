@@ -44,10 +44,10 @@ class LoadingTest < ActiveSupport::TestCase
     boot_app
 
     e = assert_raise(NameError) { User }
-    assert_equal "uninitialized constant #{self.class}::User", e.message
+    assert_match "uninitialized constant #{self.class}::User", e.message
 
     e = assert_raise(NameError) { Post }
-    assert_equal "uninitialized constant Post::NON_EXISTING_CONSTANT", e.message
+    assert_match "uninitialized constant Post::NON_EXISTING_CONSTANT", e.message
   end
 
   test "concerns in app are autoloaded" do
@@ -109,9 +109,9 @@ class LoadingTest < ActiveSupport::TestCase
     assert ::Rails.application.config.loaded
   end
 
-  test "descendants loaded after framework initialization are cleaned on each request without cache classes" do
+  test "descendants loaded after framework initialization are cleaned on each request if reloading is enabled" do
     add_to_config <<-RUBY
-      config.cache_classes = false
+      config.enable_reloading = true
       config.reload_classes_only_on_change = false
     RUBY
 
@@ -122,8 +122,8 @@ class LoadingTest < ActiveSupport::TestCase
 
     app_file "config/routes.rb", <<-RUBY
       Rails.application.routes.draw do
-        get '/load',   to: lambda { |env| [200, {}, Post.all] }
-        get '/unload', to: lambda { |env| [200, {}, []] }
+        get '/load',   to: lambda { |env| Post.all.to_a; [200, {}, [ActiveRecord::Base.descendants.collect(&:to_s).sort.uniq.to_json]] }
+        get '/unload', to: lambda { |env| [200, {}, [ActiveRecord::Base.descendants.collect(&:to_s).sort.uniq.to_json]] }
       end
     RUBY
 
@@ -134,25 +134,26 @@ class LoadingTest < ActiveSupport::TestCase
     setup_ar!
 
     initial = [
-      ActiveStorage::Record, ActiveStorage::Blob, ActiveStorage::Attachment,
-      ActiveRecord::SchemaMigration, ActiveRecord::InternalMetadata, ApplicationRecord
+      ActiveStorage::Record, ActiveStorage::Blob, ActiveStorage::Attachment, ApplicationRecord
     ].collect(&:to_s).sort
 
     assert_equal initial, ActiveRecord::Base.descendants.collect(&:to_s).sort.uniq
     get "/load"
-    assert_equal [Post].collect(&:to_s).sort, ActiveRecord::Base.descendants.collect(&:to_s).sort - initial
+    assert_equal 200, last_response.status
+    assert_equal ["Post"], JSON.parse(last_response.body) - initial
     get "/unload"
-    assert_equal ["ActiveRecord::InternalMetadata", "ActiveRecord::SchemaMigration"], ActiveRecord::Base.descendants.collect(&:to_s).sort.uniq
+    assert_equal 200, last_response.status
+    assert_equal [], JSON.parse(last_response.body) - initial
   end
 
-  test "initialize cant be called twice" do
+  test "initialize can't be called twice" do
     require "#{app_path}/config/environment"
     assert_raise(RuntimeError) { Rails.application.initialize! }
   end
 
   test "reload constants on development" do
     add_to_config <<-RUBY
-      config.cache_classes = false
+      config.enable_reloading = true
     RUBY
 
     app_file "config/routes.rb", <<-RUBY
@@ -187,7 +188,7 @@ class LoadingTest < ActiveSupport::TestCase
 
   test "does not reload constants on development if custom file watcher always returns false" do
     add_to_config <<-RUBY
-      config.cache_classes = false
+      config.enable_reloading = true
       config.file_watcher = Class.new do
         def initialize(*); end
         def updated?; false; end
@@ -228,7 +229,7 @@ class LoadingTest < ActiveSupport::TestCase
 
   test "added files (like db/schema.rb) also trigger reloading" do
     add_to_config <<-RUBY
-      config.cache_classes = false
+      config.enable_reloading = true
     RUBY
 
     app_file "config/routes.rb", <<-RUBY
@@ -260,7 +261,7 @@ class LoadingTest < ActiveSupport::TestCase
 
   test "dependencies reloading is followed by routes reloading" do
     add_to_config <<-RUBY
-      config.cache_classes = false
+      config.enable_reloading = true
     RUBY
 
     app_file "config/routes.rb", <<-RUBY
@@ -293,7 +294,7 @@ class LoadingTest < ActiveSupport::TestCase
 
   test "routes are only loaded once on boot" do
     add_to_config <<-RUBY
-      config.cache_classes = false
+      config.enable_reloading = true
     RUBY
 
     app_file "config/routes.rb", <<-RUBY
@@ -317,7 +318,7 @@ class LoadingTest < ActiveSupport::TestCase
 
   test "columns migrations also trigger reloading" do
     add_to_config <<-RUBY
-      config.cache_classes = false
+      config.enable_reloading = true
     RUBY
 
     app_file "config/routes.rb", <<-RUBY
@@ -484,7 +485,7 @@ class LoadingTest < ActiveSupport::TestCase
 
   private
     def setup_ar!
-      ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
+      ActiveRecord::Base.establish_connection
       ActiveRecord::Migration.verbose = false
       ActiveRecord::Schema.define(version: 1) do
         create_table :posts do |t|

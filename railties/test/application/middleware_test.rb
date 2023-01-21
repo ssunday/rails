@@ -21,15 +21,16 @@ module ApplicationTests
 
     test "default middleware stack" do
       add_to_config "config.active_record.migration_error = :page_load"
+      add_to_config "config.server_timing = true"
 
       boot!
 
       assert_equal [
-        "Webpacker::DevServerProxy",
         "ActionDispatch::HostAuthorization",
         "Rack::Sendfile",
         "ActionDispatch::Static",
         "ActionDispatch::Executor",
+        "ActionDispatch::ServerTiming",
         "ActiveSupport::Cache::Strategy::LocalCache",
         "Rack::Runtime",
         "Rack::MethodOverride",
@@ -56,15 +57,16 @@ module ApplicationTests
     test "default middleware stack when requests are local" do
       add_to_config "config.consider_all_requests_local = true"
       add_to_config "config.active_record.migration_error = :page_load"
+      add_to_config "config.server_timing = true"
 
       boot!
 
       assert_equal [
-        "Webpacker::DevServerProxy",
         "ActionDispatch::HostAuthorization",
         "Rack::Sendfile",
         "ActionDispatch::Static",
         "ActionDispatch::Executor",
+        "ActionDispatch::ServerTiming",
         "ActiveSupport::Cache::Strategy::LocalCache",
         "Rack::Runtime",
         "Rack::MethodOverride",
@@ -95,7 +97,6 @@ module ApplicationTests
       boot!
 
       assert_equal [
-        "Webpacker::DevServerProxy",
         "ActionDispatch::HostAuthorization",
         "Rack::Sendfile",
         "ActionDispatch::Static",
@@ -146,6 +147,27 @@ module ApplicationTests
       assert_equal sorted, middleware
     end
 
+    test "ActionDispatch::HostAuthorization is not included if no hosts are configured" do
+      add_to_config "config.hosts = []"
+      boot!
+
+      assert_not_includes middleware, "ActionDispatch::HostAuthorization"
+    end
+
+    test "ActionDispatch::HostAuthorization is not included if hosts is set to nil" do
+      add_to_config "config.hosts = nil"
+      boot!
+
+      assert_not_includes middleware, "ActionDispatch::HostAuthorization"
+    end
+
+    test "ActionDispatch::HostAuthorization is included if hosts is set to IPAddr" do
+      add_to_config "config.hosts = IPAddr.new('0.0.0.0/0')"
+      boot!
+
+      assert_includes middleware, "ActionDispatch::HostAuthorization"
+    end
+
     test "Rack::Cache is not included by default" do
       boot!
 
@@ -179,7 +201,7 @@ module ApplicationTests
       add_to_config "config.ssl_options = { redirect: { host: 'example.com' } }"
       boot!
 
-      assert_equal [{ redirect: { host: "example.com" }, ssl_default_redirect_status: 308 }], Rails.application.middleware[2].args
+      assert_equal [{ redirect: { host: "example.com" }, ssl_default_redirect_status: 308 }], Rails.application.middleware[1].args
     end
 
     test "removing Active Record omits its middleware" do
@@ -193,8 +215,8 @@ module ApplicationTests
       assert_includes middleware, "ActionDispatch::Executor"
     end
 
-    test "does not include lock if cache_classes is set and so is eager_load" do
-      add_to_config "config.cache_classes = true"
+    test "does not include lock if reload is disabled and eager_load enabled" do
+      add_to_config "config.enable_reloading = false"
       add_to_config "config.eager_load = true"
       boot!
       assert_not_includes middleware, "Rack::Lock"
@@ -247,8 +269,8 @@ module ApplicationTests
       assert_includes middleware, "ActionDispatch::DebugExceptions"
     end
 
-    test "removes ActionDispatch::Reloader if cache_classes is true" do
-      add_to_config "config.cache_classes = true"
+    test "removes ActionDispatch::Reloader if reload is disabled" do
+      add_to_config "config.enable_reloading = false"
       boot!
       assert_not_includes middleware, "ActionDispatch::Reloader"
     end
@@ -263,32 +285,32 @@ module ApplicationTests
     test "insert middleware after" do
       add_to_config "config.middleware.insert_after Rack::Sendfile, Rack::Config"
       boot!
-      assert_equal "Rack::Config", middleware.fourth
+      assert_equal "Rack::Config", middleware.third
     end
 
     test "unshift middleware" do
       add_to_config "config.middleware.unshift Rack::Config"
       boot!
-      assert_equal "Rack::Config", middleware.second
+      assert_equal "Rack::Config", middleware.first
     end
 
     test "Rails.cache does not respond to middleware" do
       add_to_config "config.cache_store = :memory_store, { timeout: 10 }"
       boot!
-      assert_equal "Rack::Runtime", middleware[5]
+      assert_equal "Rack::Runtime", middleware[4]
       assert_instance_of ActiveSupport::Cache::MemoryStore, Rails.cache
     end
 
     test "Rails.cache does respond to middleware" do
       boot!
-      assert_equal "ActiveSupport::Cache::Strategy::LocalCache", middleware[5]
-      assert_equal "Rack::Runtime", middleware[6]
+      assert_equal "ActiveSupport::Cache::Strategy::LocalCache", middleware[4]
+      assert_equal "Rack::Runtime", middleware[5]
     end
 
     test "insert middleware before" do
       add_to_config "config.middleware.insert_before Rack::Sendfile, Rack::Config"
       boot!
-      assert_equal "Rack::Config", middleware.third
+      assert_equal "Rack::Config", middleware.second
     end
 
     test "can't change middleware after it's built" do
@@ -342,6 +364,49 @@ module ApplicationTests
       Rails.application.call(env)
 
       assert_equal "/foo/?something", env["ORIGINAL_FULLPATH"]
+    end
+
+    test "database selector middleware is installed from application.rb" do
+      add_to_config "config.active_record.database_selector = { delay: 10 }"
+
+      boot!
+
+      assert_includes middleware, "ActiveRecord::Middleware::DatabaseSelector"
+    end
+
+    test "database selector middleware is installed from config/initializers" do
+      app_file "config/initializers/multi_db.rb", <<-RUBY
+        Rails.application.configure do
+          config.active_record.database_selector = { delay: 15.seconds }
+          config.active_record.database_resolver = ActiveRecord::Middleware::DatabaseSelector::Resolver
+          config.active_record.database_resolver_context = ActiveRecord::Middleware::DatabaseSelector::Resolver::Session
+        end
+      RUBY
+
+      boot!
+
+      assert_includes middleware, "ActiveRecord::Middleware::DatabaseSelector"
+    end
+
+    test "shard selector middleware is installed by config option" do
+      add_to_config "config.active_record.shard_resolver = ->(*) { }"
+
+      boot!
+
+      assert_includes middleware, "ActiveRecord::Middleware::ShardSelector"
+    end
+
+    test "shard selector middleware is installed from config/initializers" do
+      app_file "config/initializers/multi_db.rb", <<-RUBY
+        Rails.application.configure do
+          config.active_record.shard_selector = { lock: true }
+          config.active_record.shard_resolver = ->(request) { Tenant.find_by!(host: request.host).shard }
+        end
+      RUBY
+
+      boot!
+
+      assert_includes middleware, "ActiveRecord::Middleware::ShardSelector"
     end
 
     private

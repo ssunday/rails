@@ -6,9 +6,9 @@ module ActionText
   class Attachment
     include Attachments::TrixConversion, Attachments::Minification, Attachments::Caching
 
-    TAG_NAME = "action-text-attachment"
-    SELECTOR = TAG_NAME
-    ATTRIBUTES = %w( sgid content-type url href filename filesize width height previewable presentation caption )
+    mattr_accessor :tag_name, default: "action-text-attachment"
+
+    ATTRIBUTES = %w( sgid content-type url href filename filesize width height previewable presentation caption content )
 
     class << self
       def fragment_by_canonicalizing_attachments(content)
@@ -20,7 +20,7 @@ module ActionText
       end
 
       def from_attachables(attachables)
-        Array(attachables).map { |attachable| from_attachable(attachable) }.compact
+        Array(attachables).filter_map { |attachable| from_attachable(attachable) }
       end
 
       def from_attachable(attachable, attributes = {})
@@ -38,7 +38,7 @@ module ActionText
       private
         def node_from_attributes(attributes)
           if attributes = process_attributes(attributes).presence
-            ActionText::HtmlConversion.create_element(TAG_NAME, attributes)
+            ActionText::HtmlConversion.create_element(tag_name, attributes)
           end
         end
 
@@ -91,7 +91,7 @@ module ActionText
 
     private
       def node_attributes
-        @node_attributes ||= ATTRIBUTES.map { |name| [ name.underscore, node[name] ] }.to_h.compact
+        @node_attributes ||= ATTRIBUTES.to_h { |name| [ name.underscore, node[name] ] }.compact
       end
 
       def attachable_attributes

@@ -6,11 +6,21 @@ module ActiveRecord
       class SchemaCreation < SchemaCreation # :nodoc:
         private
           def visit_AlterTable(o)
-            super << o.constraint_validations.map { |fk| visit_ValidateConstraint fk }.join(" ")
+            sql = super
+            sql << o.constraint_validations.map { |fk| visit_ValidateConstraint fk }.join(" ")
+            sql << o.exclusion_constraint_adds.map { |con| visit_AddExclusionConstraint con }.join(" ")
+            sql << o.exclusion_constraint_drops.map { |con| visit_DropExclusionConstraint con }.join(" ")
           end
 
           def visit_AddForeignKey(o)
-            super.dup.tap { |sql| sql << " NOT VALID" unless o.validate? }
+            super.dup.tap do |sql|
+              if o.deferrable
+                sql << " DEFERRABLE"
+                sql << " INITIALLY #{o.deferrable.to_s.upcase}" unless o.deferrable == true
+              end
+
+              sql << " NOT VALID" unless o.validate?
+            end
           end
 
           def visit_CheckConstraintDefinition(o)
@@ -19,6 +29,25 @@ module ActiveRecord
 
           def visit_ValidateConstraint(name)
             "VALIDATE CONSTRAINT #{quote_column_name(name)}"
+          end
+
+          def visit_ExclusionConstraintDefinition(o)
+            sql = ["CONSTRAINT"]
+            sql << o.name
+            sql << "EXCLUDE"
+            sql << "USING #{o.using}" if o.using
+            sql << "(#{o.expression})"
+            sql << "WHERE (#{o.where})" if o.where
+
+            sql.join(" ")
+          end
+
+          def visit_AddExclusionConstraint(o)
+            "ADD #{accept(o)}"
+          end
+
+          def visit_DropExclusionConstraint(name)
+            "DROP CONSTRAINT #{quote_column_name(name)}"
           end
 
           def visit_ChangeColumnDefinition(o)
@@ -57,9 +86,31 @@ module ActiveRecord
             change_column_sql
           end
 
+          def visit_ChangeColumnDefaultDefinition(o)
+            sql = +"ALTER COLUMN #{quote_column_name(o.column.name)} "
+            if o.default.nil?
+              sql << "DROP DEFAULT"
+            else
+              sql << "SET DEFAULT #{quote_default_expression(o.default, o.column)}"
+            end
+          end
+
           def add_column_options!(sql, options)
             if options[:collation]
               sql << " COLLATE \"#{options[:collation]}\""
+            end
+
+            if as = options[:as]
+              sql << " GENERATED ALWAYS AS (#{as})"
+
+              if options[:stored]
+                sql << " STORED"
+              else
+                raise ArgumentError, <<~MSG
+                  PostgreSQL currently does not support VIRTUAL (not persisted) generated columns.
+                  Specify 'stored: true' option for '#{options[:column].name}'
+                MSG
+              end
             end
             super
           end

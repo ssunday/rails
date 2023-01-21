@@ -4,7 +4,7 @@ module ActiveRecord
   # See ActiveRecord::Transactions::ClassMethods for documentation.
   module Transactions
     extend ActiveSupport::Concern
-    #:nodoc:
+    # :nodoc:
     ACTIONS = [:create, :destroy, :update]
 
     included do
@@ -12,6 +12,8 @@ module ActiveRecord
                        :before_commit,
                        scope: [:kind, :name]
     end
+
+    attr_accessor :_new_record_before_last_commit # :nodoc:
 
     # = Active Record Transactions
     #
@@ -98,7 +100,8 @@ module ActiveRecord
     # catch those in your application code.
     #
     # One exception is the ActiveRecord::Rollback exception, which will trigger
-    # a ROLLBACK when raised, but not be re-raised by the transaction block.
+    # a ROLLBACK when raised, but not be re-raised by the transaction block. Any
+    # other exception will be re-raised.
     #
     # *Warning*: one should not catch ActiveRecord::StatementInvalid exceptions
     # inside a transaction block. ActiveRecord::StatementInvalid exceptions indicate that an
@@ -271,8 +274,10 @@ module ActiveRecord
           if options[:on]
             fire_on = Array(options[:on])
             assert_valid_transaction_action(fire_on)
-            options[:if] = Array(options[:if])
-            options[:if].unshift(-> { transaction_include_any_action?(fire_on) })
+            options[:if] = [
+              -> { transaction_include_any_action?(fire_on) },
+              *options[:if]
+            ]
           end
         end
 
@@ -288,19 +293,19 @@ module ActiveRecord
       self.class.transaction(**options, &block)
     end
 
-    def destroy #:nodoc:
+    def destroy # :nodoc:
       with_transaction_returning_status { super }
     end
 
-    def save(**) #:nodoc:
+    def save(**) # :nodoc:
       with_transaction_returning_status { super }
     end
 
-    def save!(**) #:nodoc:
+    def save!(**) # :nodoc:
       with_transaction_returning_status { super }
     end
 
-    def touch(*, **) #:nodoc:
+    def touch(*, **) # :nodoc:
       with_transaction_returning_status { super }
     end
 
@@ -312,8 +317,8 @@ module ActiveRecord
     #
     # Ensure that it is not called if the object was never persisted (failed create),
     # but call it after the commit of a destroyed object.
-    def committed!(should_run_callbacks: true) #:nodoc:
-      force_clear_transaction_record_state
+    def committed!(should_run_callbacks: true) # :nodoc:
+      @_start_transaction_state = nil
       if should_run_callbacks
         @_committed_already_called = true
         _run_commit_callbacks
@@ -324,7 +329,7 @@ module ActiveRecord
 
     # Call the #after_rollback callbacks. The +force_restore_state+ argument indicates if the record
     # state should be rolled back to the beginning or just to the last savepoint.
-    def rolledback!(force_restore_state: false, should_run_callbacks: true) #:nodoc:
+    def rolledback!(force_restore_state: false, should_run_callbacks: true) # :nodoc:
       if should_run_callbacks
         _run_rollback_callbacks
       end
@@ -363,6 +368,13 @@ module ActiveRecord
     private
       attr_reader :_committed_already_called, :_trigger_update_callback, :_trigger_destroy_callback
 
+      def init_internals
+        super
+        @_start_transaction_state = nil
+        @_committed_already_called = nil
+        @_new_record_before_last_commit = nil
+      end
+
       # Save the new record state and id of a record so it can be restored later if a transaction fails.
       def remember_transaction_record_state
         @_start_transaction_state ||= {
@@ -387,12 +399,7 @@ module ActiveRecord
       def clear_transaction_record_state
         return unless @_start_transaction_state
         @_start_transaction_state[:level] -= 1
-        force_clear_transaction_record_state if @_start_transaction_state[:level] < 1
-      end
-
-      # Force to clear the transaction record state.
-      def force_clear_transaction_record_state
-        @_start_transaction_state = nil
+        @_start_transaction_state = nil if @_start_transaction_state[:level] < 1
       end
 
       # Restore the new record state and id of a record that was previously saved by a call to save_record_state.

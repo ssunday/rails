@@ -138,7 +138,7 @@ module ActiveRecord
   module AutosaveAssociation
     extend ActiveSupport::Concern
 
-    module AssociationBuilderExtension #:nodoc:
+    module AssociationBuilderExtension # :nodoc:
       def self.build(model, reflection)
         model.send(:add_autosave_association_callbacks, reflection)
       end
@@ -150,25 +150,10 @@ module ActiveRecord
 
     included do
       Associations::Builder::Association.extensions << AssociationBuilderExtension
-      mattr_accessor :index_nested_attribute_errors, instance_writer: false, default: false
     end
 
     module ClassMethods # :nodoc:
       private
-        if Module.method(:method_defined?).arity == 1 # MRI 2.5 and older
-          using Module.new {
-            refine Module do
-              def method_defined?(method, inherit = true)
-                if inherit
-                  super(method)
-                else
-                  instance_methods(false).include?(method.to_sym)
-                end
-              end
-            end
-          }
-        end
-
         def define_non_cyclic_method(name, &block)
           return if method_defined?(name, false)
 
@@ -210,7 +195,7 @@ module ActiveRecord
             after_create save_method
             after_update save_method
           elsif reflection.has_one?
-            define_method(save_method) { save_has_one_association(reflection) } unless method_defined?(save_method)
+            define_non_cyclic_method(save_method) { save_has_one_association(reflection) }
             # Configures two callbacks instead of a single after_save so that
             # the model may rely on their execution order relative to its
             # own callbacks.
@@ -288,6 +273,11 @@ module ActiveRecord
     end
 
     private
+      def init_internals
+        super
+        @_already_called = nil
+      end
+
       # Returns the record for an association collection that should be validated
       # or saved. If +autosave+ is +false+ only new records will be returned,
       # unless the parent is/was a new record itself.
@@ -349,7 +339,7 @@ module ActiveRecord
 
         unless valid = record.valid?(context)
           if reflection.options[:autosave]
-            indexed_attribute = !index.nil? && (reflection.options[:index_errors] || ActiveRecord::Base.index_nested_attribute_errors)
+            indexed_attribute = !index.nil? && (reflection.options[:index_errors] || ActiveRecord.index_nested_attribute_errors)
 
             record.errors.group_by_attribute.each { |attribute, errors|
               attribute = normalize_reflection_attribute(indexed_attribute, reflection, index, attribute)
@@ -419,6 +409,8 @@ module ActiveRecord
               saved = true
 
               if autosave != false && (new_record_before_save || record.new_record?)
+                association.set_inverse_instance(record)
+
                 if autosave
                   saved = association.insert_record(record, false)
                 elsif !reflection.nested?
@@ -459,12 +451,10 @@ module ActiveRecord
           elsif autosave != false
             key = reflection.options[:primary_key] ? public_send(reflection.options[:primary_key]) : id
 
-            if (autosave && record.changed_for_autosave?) || record_changed?(reflection, record, key)
+            if (autosave && record.changed_for_autosave?) || _record_changed?(reflection, record, key)
               unless reflection.through_reflection
                 record[reflection.foreign_key] = key
-                if inverse_reflection = reflection.inverse_of
-                  record.association(inverse_reflection.name).inversed_from(self)
-                end
+                association.set_inverse_instance(record)
               end
 
               saved = record.save(validate: !autosave)
@@ -476,9 +466,10 @@ module ActiveRecord
       end
 
       # If the record is new or it has changed, returns true.
-      def record_changed?(reflection, record, key)
+      def _record_changed?(reflection, record, key)
         record.new_record? ||
-          association_foreign_key_changed?(reflection, record, key) ||
+          (association_foreign_key_changed?(reflection, record, key) ||
+          inverse_polymorphic_association_changed?(reflection, record)) ||
           record.will_save_change_to_attribute?(reflection.foreign_key)
       end
 
@@ -486,6 +477,14 @@ module ActiveRecord
         return false if reflection.through_reflection?
 
         record._has_attribute?(reflection.foreign_key) && record._read_attribute(reflection.foreign_key) != key
+      end
+
+      def inverse_polymorphic_association_changed?(reflection, record)
+        return false unless reflection.inverse_of&.polymorphic?
+
+        class_name = record._read_attribute(reflection.inverse_of.foreign_type)
+
+        reflection.active_record != record.class.polymorphic_class_for(class_name)
       end
 
       # Saves the associated record if it's new or <tt>:autosave</tt> is enabled.
@@ -507,7 +506,7 @@ module ActiveRecord
 
             if association.updated?
               association_id = record.public_send(reflection.options[:primary_key] || :id)
-              self[reflection.foreign_key] = association_id
+              self[reflection.foreign_key] = association_id unless self[reflection.foreign_key] == association_id
               association.loaded!
             end
 

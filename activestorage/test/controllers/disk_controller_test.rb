@@ -5,12 +5,12 @@ require "database/setup"
 
 class ActiveStorage::DiskControllerTest < ActionDispatch::IntegrationTest
   test "showing blob inline" do
-    blob = create_blob(filename: "hello.jpg", content_type: "image/jpg")
+    blob = create_blob(filename: "hello.jpg", content_type: "image/jpeg")
 
     get blob.url
     assert_response :ok
     assert_equal "inline; filename=\"hello.jpg\"; filename*=UTF-8''hello.jpg", response.headers["Content-Disposition"]
-    assert_equal "image/jpg", response.headers["Content-Type"]
+    assert_equal "image/jpeg", response.headers["Content-Type"]
     assert_equal "Hello world!", response.body
   end
 
@@ -32,6 +32,12 @@ class ActiveStorage::DiskControllerTest < ActionDispatch::IntegrationTest
     assert_equal " worl", response.body
   end
 
+  test "showing blob with invalid range" do
+    blob = create_blob
+    get blob.url, headers: { "Range" => "bytes=1000-1000" }
+    assert_response :range_not_satisfiable
+  end
+
   test "showing blob that does not exist" do
     blob = create_blob
     blob.delete
@@ -46,11 +52,11 @@ class ActiveStorage::DiskControllerTest < ActionDispatch::IntegrationTest
 
   test "showing public blob" do
     with_service("local_public") do
-      blob = create_blob(content_type: "image/jpg")
+      blob = create_blob(content_type: "image/jpeg")
 
       get blob.url
       assert_response :ok
-      assert_equal "image/jpg", response.headers["Content-Type"]
+      assert_equal "image/jpeg", response.headers["Content-Type"]
       assert_equal "Hello world!", response.body
     end
   end
@@ -67,7 +73,7 @@ class ActiveStorage::DiskControllerTest < ActionDispatch::IntegrationTest
 
   test "directly uploading blob with integrity" do
     data = "Something else entirely!"
-    blob = create_blob_before_direct_upload byte_size: data.size, checksum: Digest::MD5.base64digest(data)
+    blob = create_blob_before_direct_upload byte_size: data.size, checksum: OpenSSL::Digest::MD5.base64digest(data)
 
     put blob.service_url_for_direct_upload, params: data, headers: { "Content-Type" => "text/plain" }
     assert_response :no_content
@@ -76,7 +82,7 @@ class ActiveStorage::DiskControllerTest < ActionDispatch::IntegrationTest
 
   test "directly uploading blob without integrity" do
     data = "Something else entirely!"
-    blob = create_blob_before_direct_upload byte_size: data.size, checksum: Digest::MD5.base64digest("bad data")
+    blob = create_blob_before_direct_upload byte_size: data.size, checksum: OpenSSL::Digest::MD5.base64digest("bad data")
 
     put blob.service_url_for_direct_upload, params: data
     assert_response :unprocessable_entity
@@ -85,7 +91,7 @@ class ActiveStorage::DiskControllerTest < ActionDispatch::IntegrationTest
 
   test "directly uploading blob with mismatched content type" do
     data = "Something else entirely!"
-    blob = create_blob_before_direct_upload byte_size: data.size, checksum: Digest::MD5.base64digest(data)
+    blob = create_blob_before_direct_upload byte_size: data.size, checksum: OpenSSL::Digest::MD5.base64digest(data)
 
     put blob.service_url_for_direct_upload, params: data, headers: { "Content-Type" => "application/octet-stream" }
     assert_response :unprocessable_entity
@@ -95,7 +101,7 @@ class ActiveStorage::DiskControllerTest < ActionDispatch::IntegrationTest
   test "directly uploading blob with different but equivalent content type" do
     data = "Something else entirely!"
     blob = create_blob_before_direct_upload(
-      byte_size: data.size, checksum: Digest::MD5.base64digest(data), content_type: "application/x-gzip")
+      byte_size: data.size, checksum: OpenSSL::Digest::MD5.base64digest(data), content_type: "application/x-gzip")
 
     put blob.service_url_for_direct_upload, params: data, headers: { "Content-Type" => "application/x-gzip" }
     assert_response :no_content
@@ -104,7 +110,7 @@ class ActiveStorage::DiskControllerTest < ActionDispatch::IntegrationTest
 
   test "directly uploading blob with mismatched content length" do
     data = "Something else entirely!"
-    blob = create_blob_before_direct_upload byte_size: data.size - 1, checksum: Digest::MD5.base64digest(data)
+    blob = create_blob_before_direct_upload byte_size: data.size - 1, checksum: OpenSSL::Digest::MD5.base64digest(data)
 
     put blob.service_url_for_direct_upload, params: data, headers: { "Content-Type" => "text/plain" }
     assert_response :unprocessable_entity

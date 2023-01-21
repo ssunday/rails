@@ -33,7 +33,7 @@ class JsonSerializationTest < ActiveRecord::TestCase
       avatar: "binarydata",
       created_at: Time.utc(2006, 8, 1),
       awesome: true,
-      preferences: { shows: "anime" }
+      preferences: { "shows" => "anime" }
     )
   end
 
@@ -301,7 +301,7 @@ class DatabaseConnectedJsonEncodingTest < ActiveRecord::TestCase
 
   def test_should_be_able_to_encode_relation
     set_include_root_in_json(true) do
-      authors_relation = Author.where(id: [@david.id, @mary.id])
+      authors_relation = Author.where(id: [@david.id, @mary.id]).order(:id)
 
       json = ActiveSupport::JSON.encode authors_relation, only: :name
       assert_equal '[{"author":{"name":"David"}},{"author":{"name":"Mary"}}]', json

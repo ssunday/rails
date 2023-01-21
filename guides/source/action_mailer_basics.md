@@ -4,7 +4,7 @@ Action Mailer Basics
 ====================
 
 This guide provides you with all you need to get started in sending
-emails from and to your application, and many internals of Action
+emails from your application, and many internals of Action
 Mailer. It also covers how to test your mailers.
 
 After reading this guide, you will know:
@@ -22,7 +22,7 @@ What is Action Mailer?
 Action Mailer allows you to send emails from your application using mailer classes
 and views.
 
-#### Mailers are similar to controllers
+### Mailers are Similar to Controllers
 
 They inherit from [`ActionMailer::Base`][] and live in `app/mailers`. Mailers also work
 very similarly to controllers. Some examples of similarities are enumerated below.
@@ -46,7 +46,7 @@ views.
 #### Create the Mailer
 
 ```bash
-$ bin/rails generate mailer UserMailer
+$ bin/rails generate mailer User
 create  app/mailers/user_mailer.rb
 create  app/mailers/application_mailer.rb
 invoke  erb
@@ -64,7 +64,9 @@ class ApplicationMailer < ActionMailer::Base
   default from: "from@example.com"
   layout 'mailer'
 end
+```
 
+```ruby
 # app/mailers/user_mailer.rb
 class UserMailer < ApplicationMailer
 end
@@ -193,10 +195,11 @@ waiting for the send to complete.
 
 ```ruby
 class UsersController < ApplicationController
-  # POST /users
-  # POST /users.json
+  # ...
+
+  # POST /users or /users.json
   def create
-    @user = User.new(params[:user])
+    @user = User.new(user_params)
 
     respond_to do |format|
       if @user.save
@@ -211,6 +214,8 @@ class UsersController < ApplicationController
       end
     end
   end
+
+  # ...
 end
 ```
 
@@ -222,8 +227,6 @@ any external infrastructure, but it's a poor fit for production since it drops
 pending jobs on restart.
 If you need a persistent backend, you will need to use an Active Job adapter
 that has a persistent backend (Sidekiq, Resque, etc).
-
-NOTE: When calling `deliver_later` the job will be placed under `mailers` queue. Make sure Active Job adapter supports this queue, otherwise the job may be silently ignored preventing email delivery. You can change this queue name by specifying `config.action_mailer.deliver_later_queue_name` option.
 
 If you want to send emails right away (from a cronjob for example) just call
 [`deliver_now`][]:
@@ -238,7 +241,7 @@ class SendWeeklySummary
 end
 ```
 
-Any key value pair passed to [`with`][] just becomes the `params` for the mailer
+Any key-value pair passed to [`with`][] just becomes the `params` for the mailer
 action. So `with(user: @user, account: @user.account)` makes `params[:user]` and
 `params[:account]` available in the mailer action. Just like controllers have
 params.
@@ -256,7 +259,7 @@ access it with the [`message`][] method on the `ActionMailer::MessageDelivery` o
 [`message`]: https://api.rubyonrails.org/classes/ActionMailer/MessageDelivery.html#method-i-message
 [`with`]: https://api.rubyonrails.org/classes/ActionMailer/Parameterized/ClassMethods.html#method-i-with
 
-### Auto encoding header values
+### Auto Encoding Header Values
 
 Action Mailer handles the auto encoding of multibyte characters inside of
 headers and bodies.
@@ -276,8 +279,8 @@ message:
 * [`attachments`][] - Allows you to add attachments to your email. For example,
   `attachments['file-name.jpg'] = File.read('file-name.jpg')`.
 * [`mail`][] - Creates the actual email itself. You can pass in headers as a hash to
-  the mail method as a parameter, mail will then create an email, either plain
-  text, or multipart, depending on what email templates you have defined.
+  the `mail` method as a parameter. `mail` will create an email — either plain
+  text or multipart — depending on what email templates you have defined.
 
 [`attachments`]: https://api.rubyonrails.org/classes/ActionMailer/Base.html#method-i-attachments
 [`headers`]: https://api.rubyonrails.org/classes/ActionMailer/Base.html#method-i-headers
@@ -288,7 +291,7 @@ Action Mailer makes it very easy to add attachments.
 
 * Pass the file name and content and Action Mailer and the
   [Mail gem](https://github.com/mikel/mail) will automatically guess the
-  mime_type, set the encoding, and create the attachment.
+  `mime_type`, set the `encoding`, and create the attachment.
 
     ```ruby
     attachments['filename.jpg'] = File.read('/path/to/filename.jpg')
@@ -349,7 +352,7 @@ Action Mailer 3.0 makes inline attachments, which involved a lot of hacking in p
     <%= image_tag attachments['image.jpg'].url, alt: 'My Photo', class: 'photos' %>
     ```
 
-#### Sending Email To Multiple Recipients
+#### Sending Email to Multiple Recipients
 
 It is possible to send email to one or more recipients in one email (e.g.,
 informing all admins of a new signup) by setting the list of emails to the `:to`
@@ -371,7 +374,7 @@ end
 The same format can be used to set carbon copy (Cc:) and blind carbon copy
 (Bcc:) recipients, by using the `:cc` and `:bcc` keys respectively.
 
-#### Sending Email With Name
+#### Sending Email with Name
 
 Sometimes you wish to show the name of the person instead of just their email
 address when they receive the email. You can use [`email_address_with_name`][] for
@@ -386,6 +389,16 @@ def welcome_email
   )
 end
 ```
+
+The same technique works to specify a sender name:
+
+```ruby
+class UserMailer < ApplicationMailer
+  default from: email_address_with_name('notification@example.com', 'Example Company Notifications')
+end
+```
+
+If the name is a blank string, it returns just the address.
 
 [`email_address_with_name`]: https://api.rubyonrails.org/classes/ActionMailer/Base.html#method-i-email_address_with_name
 
@@ -414,7 +427,7 @@ class UserMailer < ApplicationMailer
 end
 ```
 
-In this case it will look for templates at `app/views/notifications` with name
+In this case, it will look for templates at `app/views/notifications` with name
 `another`.  You can also specify an array of paths for `template_path`, and they
 will be searched in order.
 
@@ -440,7 +453,7 @@ end
 This will render the template 'another_template.html.erb' for the HTML part and
 use the rendered text for the text part. The render command is the same one used
 inside of Action Controller, so you can use all the same options, such as
-`:text`, `:inline` etc.
+`:text`, `:inline`, etc.
 
 If you would like to render a template located outside of the default `app/views/mailer_name/` directory, you can apply the [`prepend_view_path`][], like so:
 
@@ -460,7 +473,7 @@ You can also consider using the [`append_view_path`][] method.
 [`append_view_path`]: https://api.rubyonrails.org/classes/ActionView/ViewPaths/ClassMethods.html#method-i-append_view_path
 [`prepend_view_path`]: https://api.rubyonrails.org/classes/ActionView/ViewPaths/ClassMethods.html#method-i-prepend_view_path
 
-#### Caching mailer view
+#### Caching Mailer View
 
 You can perform fragment caching in mailer views like in application views using the [`cache`][] method.
 
@@ -470,7 +483,7 @@ You can perform fragment caching in mailer views like in application views using
 <% end %>
 ```
 
-And in order to use this feature, you need to configure your application with this:
+And to use this feature, you need to configure your application with this:
 
 ```ruby
 config.action_mailer.perform_caching = true
@@ -488,7 +501,7 @@ needs to be the same as your mailer, such as `user_mailer.html.erb` and
 `user_mailer.text.erb` to be automatically recognized by your mailer as a
 layout.
 
-In order to use a different file, call [`layout`][] in your mailer:
+To use a different file, call [`layout`][] in your mailer:
 
 ```ruby
 class UserMailer < ApplicationMailer
@@ -543,12 +556,12 @@ visually see the new style instantly. A list of previews are also available
 in <http://localhost:3000/rails/mailers>.
 
 By default, these preview classes live in `test/mailers/previews`.
-This can be configured using the `preview_path` option. For example, if you
-want to change it to `lib/mailer_previews`, you can configure it in
+This can be configured using the `preview_paths` option. For example, if you
+want to add `lib/mailer_previews` to it, you can configure it in
 `config/application.rb`:
 
 ```ruby
-config.action_mailer.preview_path = "#{Rails.root}/lib/mailer_previews"
+config.action_mailer.preview_paths << "#{Rails.root}/lib/mailer_previews"
 ```
 
 ### Generating URLs in Action Mailer Views
@@ -563,8 +576,8 @@ globally in `config/application.rb`:
 config.action_mailer.default_url_options = { host: 'example.com' }
 ```
 
-Because of this behavior you cannot use any of the `*_path` helpers inside of
-an email. Instead you will need to use the associated `*_url` helper. For example
+Because of this behavior, you cannot use any of the `*_path` helpers inside of
+an email. Instead, you will need to use the associated `*_url` helper. For example
 instead of using
 
 ```html+erb
@@ -598,7 +611,7 @@ If you did not configure the `:host` option globally make sure to pass it to
 #### Generating URLs with Named Routes
 
 Email clients have no web context and so paths have no base URL to form complete
-web addresses. Thus, you should always use the "_url" variant of named route
+web addresses. Thus, you should always use the `*_url` variant of named route
 helpers.
 
 If you did not configure the `:host` option globally make sure to pass it to the
@@ -608,11 +621,11 @@ URL helper.
 <%= user_url(@user, host: 'example.com') %>
 ```
 
-NOTE: non-`GET` links require [rails-ujs](https://github.com/rails/rails/blob/master/actionview/app/assets/javascripts) or
+NOTE: non-`GET` links require [rails-ujs](https://github.com/rails/rails/blob/main/actionview/app/assets/javascripts) or
 [jQuery UJS](https://github.com/rails/jquery-ujs), and won't work in mailer templates.
 They will result in normal `GET` requests.
 
-### Adding images in Action Mailer Views
+### Adding Images in Action Mailer Views
 
 Unlike controllers, the mailer instance doesn't have any context about the
 incoming request so you'll need to provide the `:asset_host` parameter yourself.
@@ -626,7 +639,7 @@ config.asset_host = 'http://example.com'
 
 Now you can display an image inside your email.
 
-```ruby
+```html+erb
 <%= image_tag 'image.jpg' %>
 ```
 
@@ -713,17 +726,16 @@ class InvitationsMailer < ApplicationMailer
   end
 
   private
-
-  def set_inviter_and_invitee
-    @inviter = params[:inviter]
-    @invitee = params[:invitee]
-  end
+    def set_inviter_and_invitee
+      @inviter = params[:inviter]
+      @invitee = params[:invitee]
+    end
 end
 ```
 
 * You could use an `after_action` to do similar setup as a `before_action` but
   using instance variables set in your mailer action.
-  
+
 * Using an `after_action` callback also enables you to override delivery method
   settings by updating `mail.delivery_method.settings`.
 
@@ -799,17 +811,22 @@ files (environment.rb, production.rb, etc...)
 | Configuration | Description |
 |---------------|-------------|
 |`logger`|Generates information on the mailing run if available. Can be set to `nil` for no logging. Compatible with both Ruby's own `Logger` and `Log4r` loggers.|
-|`smtp_settings`|Allows detailed configuration for `:smtp` delivery method:<ul><li>`:address` - Allows you to use a remote mail server. Just change it from its default `"localhost"` setting.</li><li>`:port` - On the off chance that your mail server doesn't run on port 25, you can change it.</li><li>`:domain` - If you need to specify a HELO domain, you can do it here.</li><li>`:user_name` - If your mail server requires authentication, set the username in this setting.</li><li>`:password` - If your mail server requires authentication, set the password in this setting.</li><li>`:authentication` - If your mail server requires authentication, you need to specify the authentication type here. This is a symbol and one of `:plain` (will send the password in the clear), `:login` (will send password Base64 encoded) or `:cram_md5` (combines a Challenge/Response mechanism to exchange information and a cryptographic Message Digest 5 algorithm to hash important information)</li><li>`:enable_starttls_auto` - Detects if STARTTLS is enabled in your SMTP server and starts to use it. Defaults to `true`.</li><li>`:openssl_verify_mode` - When using TLS, you can set how OpenSSL checks the certificate. This is really useful if you need to validate a self-signed and/or a wildcard certificate. You can use the name of an OpenSSL verify constant ('none' or 'peer') or directly the constant (`OpenSSL::SSL::VERIFY_NONE` or `OpenSSL::SSL::VERIFY_PEER`).</li><li>`:ssl/:tls` - Enables the SMTP connection to use SMTP/TLS (SMTPS: SMTP over direct TLS connection)</li></ul>|
-|`sendmail_settings`|Allows you to override options for the `:sendmail` delivery method.<ul><li>`:location` - The location of the sendmail executable. Defaults to `/usr/sbin/sendmail`.</li><li>`:arguments` - The command line arguments to be passed to sendmail. Defaults to `-i`.</li></ul>|
-|`raise_delivery_errors`|Whether or not errors should be raised if the email fails to be delivered. This only works if the external email server is configured for immediate delivery.|
-|`delivery_method`|Defines a delivery method. Possible values are:<ul><li>`:smtp` (default), can be configured by using `config.action_mailer.smtp_settings`.</li><li>`:sendmail`, can be configured by using `config.action_mailer.sendmail_settings`.</li><li>`:file`: save emails to files; can be configured by using `config.action_mailer.file_settings`.</li><li>`:test`: save emails to `ActionMailer::Base.deliveries` array.</li></ul>See [API docs](https://api.rubyonrails.org/classes/ActionMailer/Base.html) for more info.|
+|`smtp_settings`|Allows detailed configuration for `:smtp` delivery method:<ul><li>`:address` - Allows you to use a remote mail server. Just change it from its default `"localhost"` setting.</li><li>`:port` - On the off chance that your mail server doesn't run on port 25, you can change it.</li><li>`:domain` - If you need to specify a HELO domain, you can do it here.</li><li>`:user_name` - If your mail server requires authentication, set the username in this setting.</li><li>`:password` - If your mail server requires authentication, set the password in this setting.</li><li>`:authentication` - If your mail server requires authentication, you need to specify the authentication type here. This is a symbol and one of `:plain` (will send the password in the clear), `:login` (will send password Base64 encoded) or `:cram_md5` (combines a Challenge/Response mechanism to exchange information and a cryptographic Message Digest 5 algorithm to hash important information)</li><li>`:enable_starttls` - Use STARTTLS when connecting to your SMTP server and fail if unsupported. Defaults to `false`.</li><li>`:enable_starttls_auto` - Detects if STARTTLS is enabled in your SMTP server and starts to use it. Defaults to `true`.</li><li>`:openssl_verify_mode` - When using TLS, you can set how OpenSSL checks the certificate. This is really useful if you need to validate a self-signed and/or a wildcard certificate. You can use the name of an OpenSSL verify constant ('none' or 'peer') or directly the constant (`OpenSSL::SSL::VERIFY_NONE` or `OpenSSL::SSL::VERIFY_PEER`).</li><li>`:ssl/:tls` - Enables the SMTP connection to use SMTP/TLS (SMTPS: SMTP over direct TLS connection)</li><li>`:open_timeout` - Number of seconds to wait while attempting to open a connection.</li><li>`:read_timeout` - Number of seconds to wait until timing-out a read(2) call.</li></ul>|
+|`sendmail_settings`|Allows you to override options for the `:sendmail` delivery method.<ul><li>`:location` - The location of the sendmail executable. Defaults to `/usr/sbin/sendmail`.</li><li>`:arguments` - The command line arguments to be passed to sendmail. Defaults to `["-i"]`.</li></ul>|
+|`raise_delivery_errors`|Whether or not errors should be raised if the email fails to be delivered. This only works if the external email server is configured for immediate delivery. Defaults to `true`.|
+|`delivery_method`|Defines a delivery method. Possible values are:<ul><li>`:smtp` (default), can be configured by using [`config.action_mailer.smtp_settings`][].</li><li>`:sendmail`, can be configured by using [`config.action_mailer.sendmail_settings`][].</li><li>`:file`: save emails to files; can be configured by using `config.action_mailer.file_settings`.</li><li>`:test`: save emails to `ActionMailer::Base.deliveries` array.</li></ul>See [API docs](https://api.rubyonrails.org/classes/ActionMailer/Base.html) for more info.|
 |`perform_deliveries`|Determines whether deliveries are actually carried out when the `deliver` method is invoked on the Mail message. By default they are, but this can be turned off to help functional testing. If this value is `false`, `deliveries` array will not be populated even if `delivery_method` is `:test`.|
 |`deliveries`|Keeps an array of all the emails sent out through the Action Mailer with delivery_method :test. Most useful for unit and functional testing.|
+|`delivery_job`|The job class used with `deliver_later`. Defaults to `ActionMailer::MailDeliveryJob`.|
+|`deliver_later_queue_name`|The name of the queue used with `deliver_later`.|
 |`default_options`|Allows you to set default values for the `mail` method options (`:from`, `:reply_to`, etc.).|
 
 For a complete writeup of possible configurations see the
 [Configuring Action Mailer](configuring.html#configuring-action-mailer) in
 our Configuring Rails Applications guide.
+
+[`config.action_mailer.sendmail_settings`]: configuring.html#config-action-mailer-sendmail-settings
+[`config.action_mailer.smtp_settings`]: configuring.html#config-action-mailer-smtp-settings
 
 ### Example Action Mailer Configuration
 
@@ -821,7 +838,7 @@ config.action_mailer.delivery_method = :sendmail
 # Defaults to:
 # config.action_mailer.sendmail_settings = {
 #   location: '/usr/sbin/sendmail',
-#   arguments: '-i'
+#   arguments: %w[ -i ]
 # }
 config.action_mailer.perform_deliveries = true
 config.action_mailer.raise_delivery_errors = true
@@ -830,24 +847,28 @@ config.action_mailer.default_options = {from: 'no-reply@example.com'}
 
 ### Action Mailer Configuration for Gmail
 
-As Action Mailer now uses the [Mail gem](https://github.com/mikel/mail), this
-becomes as simple as adding to your `config/environments/$RAILS_ENV.rb` file:
+Action Mailer uses the [Mail gem](https://github.com/mikel/mail) and accepts similar configuration.
+Add this to your `config/environments/$RAILS_ENV.rb` file to send via Gmail:
 
 ```ruby
 config.action_mailer.delivery_method = :smtp
 config.action_mailer.smtp_settings = {
-  address:              'smtp.gmail.com',
-  port:                 587,
-  domain:               'example.com',
-  user_name:            '<username>',
-  password:             '<password>',
-  authentication:       'plain',
-  enable_starttls_auto: true }
+  address:         'smtp.gmail.com',
+  port:            587,
+  domain:          'example.com',
+  user_name:       '<username>',
+  password:        '<password>',
+  authentication:  'plain',
+  enable_starttls: true,
+  open_timeout:    5,
+  read_timeout:    5 }
 ```
-NOTE: As of July 15, 2014, Google increased [its security measures](https://support.google.com/accounts/answer/6010255) and now blocks attempts from apps it deems less secure.
+
+If you are using an old version of the Mail gem (2.6.x or earlier), use `enable_starttls_auto` instead of `enable_starttls`.
+
+NOTE: Google [blocks sign-ins](https://support.google.com/accounts/answer/6010255) from apps it deems less secure.
 You can change your Gmail settings [here](https://www.google.com/settings/security/lesssecureapps) to allow the attempts. If your Gmail account has 2-factor authentication enabled,
-then you will need to set an [app password](https://myaccount.google.com/apppasswords) and use that instead of your regular password. Alternatively, you can
-use another ESP to send email by replacing 'smtp.gmail.com' above with the address of your provider.
+then you will need to set an [app password](https://myaccount.google.com/apppasswords) and use that instead of your regular password.
 
 Mailer Testing
 --------------
@@ -862,7 +883,7 @@ Action Mailer provides hooks into the Mail observer and interceptor methods. The
 
 ### Intercepting Emails
 
-Interceptors allow you to make modifications to emails before they are handed off to the delivery agents. An interceptor class must implement the `:delivering_email(message)` method which will be called before the email is sent.
+Interceptors allow you to make modifications to emails before they are handed off to the delivery agents. An interceptor class must implement the `::delivering_email(message)` method which will be called before the email is sent.
 
 ```ruby
 class SandboxEmailInterceptor
@@ -872,22 +893,21 @@ class SandboxEmailInterceptor
 end
 ```
 
-Before the interceptor can do its job you need to register it using
-[`register_interceptor`][]. You can do this in an initializer file
-`config/initializers/sandbox_email_interceptor.rb`
+Before the interceptor can do its job you need to register it using the `interceptors` config option.
+You can do this in an initializer file like `config/initializers/mail_interceptors.rb`:
 
 ```ruby
-if Rails.env.staging?
-  ActionMailer::Base.register_interceptor(SandboxEmailInterceptor)
+Rails.application.configure do
+  if Rails.env.staging?
+    config.action_mailer.interceptors = %w[SandboxEmailInterceptor]
+  end
 end
 ```
 
 NOTE: The example above uses a custom environment called "staging" for a
-production like server but for testing purposes. You can read
-[Creating Rails environments](configuring.html#creating-rails-environments)
+production-like server but for testing purposes. You can read
+[Creating Rails Environments](configuring.html#creating-rails-environments)
 for more information about custom Rails environments.
-
-[`register_interceptor`]: https://api.rubyonrails.org/classes/ActionMailer/Base.html#method-c-register_interceptor
 
 ### Observing Emails
 
@@ -900,11 +920,12 @@ class EmailDeliveryObserver
   end
 end
 ```
-Similar to interceptors, you must register observers using [`register_observer`][]. You can do this in an initializer file
-`config/initializers/email_delivery_observer.rb`
+
+Similar to interceptors, you must register observers using the `observers` config option.
+You can do this in an initializer file like `config/initializers/mail_observers.rb`:
 
 ```ruby
-ActionMailer::Base.register_observer(EmailDeliveryObserver)
+Rails.application.configure do
+  config.action_mailer.observers = %w[EmailDeliveryObserver]
+end
 ```
-
-[`register_observer`]: https://api.rubyonrails.org/classes/ActionMailer/Base.html#method-c-register_observer
